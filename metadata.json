@@ -1,0 +1,6 @@
+{
+  "name": "Custom Audiobook Studio",
+  "description": "Phone and PC friendly custom audiobook platform with ePub text extraction, AI speech narration, categorized library, and seamless chapter player.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
