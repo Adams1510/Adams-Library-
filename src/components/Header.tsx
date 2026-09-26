@@ -58,7 +58,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-bold text-lg tracking-tight text-slate-900 dark:text-white flex items-center gap-1">
-                  Audiobook<span className="text-emerald-600 dark:text-emerald-400">Studio</span>
+                  Adam’s <span className="text-emerald-600 dark:text-emerald-400">Library</span>
                 </span>
                 <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60">
                   <Sparkles className="w-3 h-3 mr-1 text-emerald-600 dark:text-emerald-400" />
@@ -82,7 +82,7 @@ export const Header: React.FC<HeaderProps> = ({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => onSearchChange(e.target.value)}
-                placeholder="Search Islamic, psychological, contemporary..."
+                placeholder="Search your library…"
                 className="w-full pl-9 pr-4 py-2 bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 rounded-xl text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
               />
               {searchQuery && (

@@ -1,80 +1,42 @@
 import JSZip from 'jszip';
-import { Book, Chapter, BookCategory } from '../types';
+import type { Book, Chapter, BookCategory } from '../types';
 
 /**
  * Strips HTML tags and unescapes standard entities for clean text extraction
  */
 export function cleanHtmlText(html: string): string {
-  if (!html) return '';
-  
-  // Replace line breaks and paragraph tags with double newlines
-  let text = html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<br\s*[\/]?>/gi, '\n')
-    .replace(/<\/h[1-6]>/gi, '\n\n')
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<\/li>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&rsquo;/g, "'")
-    .replace(/&lsquo;/g, "'")
-    .replace(/&rdquo;/g, '"')
-    .replace(/&ldquo;/g, '"')
-    .replace(/&mdash;/g, '—')
-    .replace(/&ndash;/g, '–');
-
-  // Collapse consecutive whitespace and normalize newlines
-  text = text
-    .split('\n')
-    .map(line => line.trim())
-    .filter(line => line.length > 0)
-    .join('\n\n');
-
-  return text.trim();
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('script, style, nav, head').forEach(node => node.remove());
+  doc.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div, li, blockquote, br').forEach(node => node.after(doc.createTextNode('\n\n')));
+  return (doc.body.textContent || '').split(/\n\s*\n/).map(p => p.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n\n');
 }
 
-/**
- * Split text into meaningful spoken paragraphs/chunks (~40-80 words each for smooth TTS tracking)
- */
+// Keep every character, including unusually long sentences and unspaced text.
 export function splitIntoParagraphs(text: string): string[] {
-  if (!text) return [];
-  const rawParagraphs = text.split(/\n\n+/);
   const result: string[] = [];
-
-  for (const raw of rawParagraphs) {
-    const trimmed = raw.trim();
-    if (!trimmed) continue;
-
-    // If paragraph is very long (more than 100 words), split into sentence chunks
-    if (trimmed.split(/\s+/).length > 90) {
-      const sentences = trimmed.match(/[^.!?]+[.!?]+["']?|[^.!?]+$/g) || [trimmed];
-      let currentChunk = '';
-      for (const sent of sentences) {
-        const s = sent.trim();
-        if (!s) continue;
-        if ((currentChunk + ' ' + s).split(/\s+/).length > 70) {
-          if (currentChunk) result.push(currentChunk.trim());
-          currentChunk = s;
-        } else {
-          currentChunk = currentChunk ? currentChunk + ' ' + s : s;
-        }
-      }
-      if (currentChunk.trim()) {
-        result.push(currentChunk.trim());
-      }
-    } else {
-      result.push(trimmed);
+  for (const paragraph of text.replace(/\r\n?/g, '\n').split(/\n\s*\n/)) {
+    let remaining = paragraph.replace(/\s+/g, ' ').trim();
+    while (remaining.length > 900) {
+      let cut = remaining.lastIndexOf(' ', 900);
+      if (cut < 400) cut = 900;
+      if (/[\uD800-\uDBFF]/.test(remaining[cut - 1])) cut--;
+      result.push(remaining.slice(0, cut).trim());
+      remaining = remaining.slice(cut).trim();
     }
+    if (remaining) result.push(remaining);
   }
+  return result;
+}
 
-  return result.length > 0 ? result : [text];
+export function resolveEpubPath(base: string, href: string): string {
+  const path = decodeURIComponent(href.split('#')[0].split('?')[0]);
+  if (/^[a-z]+:/i.test(path)) throw new Error('External chapter references are not supported.');
+  const parts: string[] = [];
+  for (const part of (path.startsWith('/') ? path : base + path).split('/')) {
+    if (part === '..') parts.pop();
+    else if (part && part !== '.') parts.push(part);
+  }
+  return parts.join('/');
 }
 
 /**
@@ -109,10 +71,14 @@ export async function parseEpub(fileData: ArrayBuffer | File, filename?: string)
   let loadedZip: JSZip;
   
   try {
-    loadedZip = await zip.loadAsync(fileData);
+    loadedZip = await zip.loadAsync(fileData instanceof ArrayBuffer ? fileData : await fileData.arrayBuffer());
   } catch (err) {
     throw new Error('Failed to read archive: The file does not appear to be a valid ePub or zip archive.');
   }
+
+  const entries = Object.values(loadedZip.files);
+  const expandedSize = entries.reduce((sum, entry) => sum + ((entry as any)._data?.uncompressedSize || 0), 0);
+  if (entries.length > 10000 || expandedSize > 100 * 1024 * 1024) throw new Error('This EPUB is too large to unpack (100 MB expanded limit).');
 
   // 1. Locate container.xml to find the OPF file path
   const containerFile = loadedZip.file('META-INF/container.xml');
@@ -122,8 +88,8 @@ export async function parseEpub(fileData: ArrayBuffer | File, filename?: string)
 
   const containerXml = await containerFile.async('text');
   const parser = new DOMParser();
-  const containerDoc = parser.parseFromString(containerXml, 'application/xml');
-  const rootfile = containerDoc.querySelector('rootfile');
+  const containerDoc = parser.parseFromString(containerXml.replace(/^\uFEFF/, '').trimStart(), 'application/xml');
+  const rootfile = containerDoc.getElementsByTagNameNS('*', 'rootfile')[0];
   const opfPath = rootfile?.getAttribute('full-path');
 
   if (!opfPath) {
@@ -137,16 +103,17 @@ export async function parseEpub(fileData: ArrayBuffer | File, filename?: string)
   }
 
   const opfXml = await opfFile.async('text');
-  const opfDoc = parser.parseFromString(opfXml, 'application/xml');
+  const opfDoc = parser.parseFromString(opfXml.replace(/^\uFEFF/, '').trimStart(), 'application/xml');
+  if (opfDoc.querySelector('parsererror')) throw new Error('The EPUB package metadata is malformed.');
 
   // Base directory for relative links
   const opfDir = opfPath.includes('/') ? opfPath.substring(0, opfPath.lastIndexOf('/') + 1) : '';
 
   // Extract Metadata
-  const titleElem = opfDoc.querySelector('metadata > title, metadata > dc\\:title');
-  const creatorElem = opfDoc.querySelector('metadata > creator, metadata > dc\\:creator');
-  const descElem = opfDoc.querySelector('metadata > description, metadata > dc\\:description');
-  const subjectElems = opfDoc.querySelectorAll('metadata > subject, metadata > dc\\:subject');
+  const titleElem = opfDoc.getElementsByTagNameNS('*', 'title')[0];
+  const creatorElem = opfDoc.getElementsByTagNameNS('*', 'creator')[0];
+  const descElem = opfDoc.getElementsByTagNameNS('*', 'description')[0];
+  const subjectElems = Array.from(opfDoc.getElementsByTagNameNS('*', 'subject'));
 
   const title = titleElem?.textContent?.trim() || (filename ? filename.replace(/\.[^/.]+$/, '') : 'Untitled ePub');
   const author = creatorElem?.textContent?.trim() || 'Unknown Author';
@@ -160,8 +127,10 @@ export async function parseEpub(fileData: ArrayBuffer | File, filename?: string)
   // Extract Manifest (id -> href, media-type)
   const manifestMap = new Map<string, { href: string; mediaType: string }>();
   let coverHref = '';
+  let coverMime = '';
+  const coverId = Array.from(opfDoc.getElementsByTagNameNS('*', 'meta')).find(e => e.getAttribute('name') === 'cover')?.getAttribute('content');
 
-  const itemElems = opfDoc.querySelectorAll('manifest > item');
+  const itemElems = Array.from(opfDoc.getElementsByTagNameNS('*', 'item'));
   itemElems.forEach(item => {
     const id = item.getAttribute('id') || '';
     const href = item.getAttribute('href') || '';
@@ -170,8 +139,9 @@ export async function parseEpub(fileData: ArrayBuffer | File, filename?: string)
 
     if (id && href) {
       manifestMap.set(id, { href, mediaType });
-      if (properties.includes('cover-image') || id.toLowerCase().includes('cover')) {
+      if (['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(mediaType) && (properties.includes('cover-image') || id === coverId || (!coverHref && id.toLowerCase().includes('cover')))) {
         coverHref = href;
+        coverMime = mediaType;
       }
     }
   });
@@ -179,12 +149,12 @@ export async function parseEpub(fileData: ArrayBuffer | File, filename?: string)
   // Extract Cover Image if available
   let coverImage: string | undefined = undefined;
   if (coverHref) {
-    const fullCoverPath = (opfDir + coverHref).replace(/^\//, '');
+    const fullCoverPath = resolveEpubPath(opfDir, coverHref);
     const coverFile = loadedZip.file(fullCoverPath) || loadedZip.file(coverHref);
     if (coverFile) {
       try {
         const coverBase64 = await coverFile.async('base64');
-        const mediaType = manifestMap.get(coverHref)?.mediaType || 'image/jpeg';
+        const mediaType = coverMime;
         coverImage = `data:${mediaType};base64,${coverBase64}`;
       } catch (e) {
         console.warn('Could not extract cover image:', e);
@@ -193,11 +163,11 @@ export async function parseEpub(fileData: ArrayBuffer | File, filename?: string)
   }
 
   // Extract Spine (reading order)
-  const spineItemrefs = opfDoc.querySelectorAll('spine > itemref');
+  const spineItemrefs = Array.from(opfDoc.getElementsByTagNameNS('*', 'itemref'));
   const chapterIds: string[] = [];
   spineItemrefs.forEach(itemref => {
     const idref = itemref.getAttribute('idref');
-    if (idref) chapterIds.push(idref);
+    if (idref && itemref.getAttribute('linear') !== 'no') chapterIds.push(idref);
   });
 
   // 3. Process Chapters from Spine
@@ -210,19 +180,19 @@ export async function parseEpub(fileData: ArrayBuffer | File, filename?: string)
     if (!item) continue;
 
     // Resolve relative path
-    const itemPath = (opfDir + item.href).replace(/^\//, '');
+    const itemPath = resolveEpubPath(opfDir, item.href);
     // In case of URI decoding issues:
     const decodedPath = decodeURIComponent(itemPath);
     const chapterFile = loadedZip.file(itemPath) || loadedZip.file(decodedPath);
 
-    if (!chapterFile) continue;
+    if (!chapterFile) throw new Error(`A chapter is missing from the EPUB: ${itemPath}`);
 
     const rawContent = await chapterFile.async('text');
     const cleanText = cleanHtmlText(rawContent);
 
     // Filter out empty placeholder or navigation pages with fewer than 15 words unless it's the only content
     const words = cleanText.split(/\s+/).filter(w => w.length > 0);
-    if (words.length < 15 && spineItemrefs.length > 3) {
+    if (words.length === 0) {
       continue;
     }
 
@@ -230,7 +200,7 @@ export async function parseEpub(fileData: ArrayBuffer | File, filename?: string)
     let chapterTitle = `Chapter ${chapterIndex}`;
     try {
       const chapterDoc = parser.parseFromString(rawContent, 'text/html');
-      const heading = chapterDoc.querySelector('h1, h2, h3, title');
+      const heading = chapterDoc.querySelector('h1, h2, h3') || chapterDoc.querySelector('title');
       if (heading && heading.textContent?.trim()) {
         const hText = heading.textContent.trim();
         if (hText.length < 80) {
@@ -284,7 +254,6 @@ export async function parseEpub(fileData: ArrayBuffer | File, filename?: string)
     uploadedAt: new Date().toISOString(),
     isCustomUpload: true,
     tags: subjects.length > 0 ? subjects : [category, 'ePub'],
-    rating: 5,
     sourceFilename: filename || 'book.epub',
   };
 }

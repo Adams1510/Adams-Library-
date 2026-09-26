@@ -1,3 +1,4 @@
+import { libraryRequest, getBook } from './services/library';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import confetti from 'canvas-confetti';
 import { Book, Chapter, BookCategory, Bookmark, SleepTimerState, TtsEngine } from './types';
@@ -47,33 +48,34 @@ export default function App() {
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
   };
 
-  // --- Persistent State: Zero placeholder books by default ---
-  const [books, setBooks] = useState<Book[]>(() => {
+  const [books, setBooks] = useState<Book[]>([]);
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+  const [readingProgress, setReadingProgress] = useState<Record<string, number>>({});
+  const [libraryLoading, setLibraryLoading] = useState(true);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [loadedBook, setLoadedBook] = useState<Book | null>(null);
+  const positions = useRef<Record<string, {chapterIndex: number; paragraphIndex: number; percentage: number}>>({});
+  const selection = useRef<{book: Book; chapterIndex: number} | null>(null);
+  const openGeneration = useRef(0);
+  const progressWrites = useRef(Promise.resolve());
+  const savePosition = (bookId: string, chapterIndex: number, paragraphIndex: number, percentage: number) => {
+    const value = {chapterIndex, paragraphIndex, percentage};
+    if (JSON.stringify(positions.current[bookId]) === JSON.stringify(value)) return;
+    positions.current[bookId] = value;
+    setReadingProgress(prev => ({...prev, [bookId]: percentage}));
+    progressWrites.current = progressWrites.current.then(() => libraryRequest('/api/progress/' + encodeURIComponent(bookId), 'PUT', value)).then(() => {}).catch(() => setLibraryError('Your latest reading position could not be saved.'));
+  };
+  const loadLibrary = async () => {
+    setLibraryLoading(true); setLibraryError(null);
     try {
-      const saved = localStorage.getItem(STORAGE_KEY_BOOKS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch {}
-    return INITIAL_BOOKS; // strictly []
-  });
-
-  const [bookmarks, setBookmarks] = useState<Bookmark[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_BOOKMARKS);
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return [];
-  });
-
-  const [readingProgress, setReadingProgress] = useState<Record<string, number>>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_PROGRESS);
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return {};
-  });
+      const [catalog, state] = await Promise.all([libraryRequest('/api/books'), libraryRequest('/api/reading-state')]);
+      setBooks(catalog.books); setBookmarks(state.bookmarks);
+      positions.current = state.positions;
+      setReadingProgress(Object.fromEntries(Object.entries(state.positions).map(([id, value]: [string, any]) => [id, value.percentage])));
+    } catch (error: any) { setLibraryError(error.message); }
+    finally { setLibraryLoading(false); }
+  };
+  useEffect(() => { void loadLibrary(); return () => { speechEngine.stop(); ambientSound.stop(); }; }, []);
 
   // --- App Views & Filtering ---
   const [currentView, setCurrentView] = useState<'library' | 'reader'>('library');
@@ -91,7 +93,7 @@ export default function App() {
   // --- Speech & Audio Settings ---
   const [playbackRate, setPlaybackRate] = useState<number>(1.0);
   const [pitch, setPitch] = useState<number>(1.0);
-  const [ttsEngine, setTtsEngine] = useState<TtsEngine>('gemini');
+  const [ttsEngine, setTtsEngine] = useState<TtsEngine>('browser');
   const [geminiVoiceName, setGeminiVoiceName] = useState<string>('Kore');
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const [ambientSoundType, setAmbientSoundType] = useState<'none' | 'rain' | 'library' | 'stream' | 'waves'>('none');
@@ -117,32 +119,17 @@ export default function App() {
   const [fallbackToast, setFallbackToast] = useState<string | null>(null);
 
   // Derive active book & chapter
-  const activeBook = books.find(b => b.id === activeBookId) || (books.length > 0 ? books[0] : null);
+  const activeBook = loadedBook?.id === activeBookId ? loadedBook : null;
   const activeChapter = activeBook?.chapters[activeChapterIndex] || (activeBook?.chapters[0] || null);
-
-  // Save books to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_BOOKS, JSON.stringify(books));
-    } catch {}
-  }, [books]);
-
-  // Save bookmarks to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_BOOKMARKS, JSON.stringify(bookmarks));
-    } catch {}
-  }, [bookmarks]);
-
-  // Save progress to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_PROGRESS, JSON.stringify(readingProgress));
-    } catch {}
-  }, [readingProgress]);
 
   // Chapter completion handler
   const handleChapterComplete = useCallback(() => {
+    const activeBook = selection.current?.book;
+    const activeChapterIndex = selection.current?.chapterIndex ?? 0;
+    if (activeBook) {
+      const lastParagraph = Math.max(0, activeBook.chapters[activeChapterIndex].paragraphs.length - 1);
+      savePosition(activeBook.id, activeChapterIndex, lastParagraph, Math.round((activeChapterIndex + 1) / activeBook.chapters.length * 100));
+    }
     if (sleepTimer.active && sleepTimer.endOfChapter) {
       speechEngine.stop();
       ambientSound.stop();
@@ -162,6 +149,7 @@ export default function App() {
     // Advance to next chapter if available
     if (activeBook && activeChapterIndex + 1 < activeBook.chapters.length) {
       const nextIdx = activeChapterIndex + 1;
+      selection.current = {book: activeBook, chapterIndex: nextIdx};
       setActiveChapterIndex(nextIdx);
       setActiveParagraphIndex(0);
       const nextChap = activeBook.chapters[nextIdx];
@@ -177,15 +165,11 @@ export default function App() {
     speechEngine.setCallbacks({
       onParagraphChange: (pIdx) => {
         setActiveParagraphIndex(pIdx);
-        // update reading progress
-        if (activeBook && activeChapter) {
-          const chapterFraction = (pIdx + 1) / (activeChapter.paragraphs.length || 1);
-          const totalChapters = activeBook.chapters.length || 1;
-          const overallFraction = ((activeChapterIndex + chapterFraction) / totalChapters) * 100;
-          setReadingProgress(prev => ({
-            ...prev,
-            [activeBook.id]: Math.min(100, Math.round(overallFraction)),
-          }));
+        const context = selection.current;
+        if (context) {
+          const chapter = context.book.chapters[context.chapterIndex];
+          const fraction = (context.chapterIndex + pIdx / Math.max(1, chapter.paragraphs.length)) / context.book.chapters.length;
+          savePosition(context.book.id, context.chapterIndex, pIdx, Math.floor(fraction * 100));
         }
       },
       onStateChange: (playing) => {
@@ -205,7 +189,7 @@ export default function App() {
         }, 6000);
       },
       onError: (err) => {
-        console.warn('Speech engine error:', err);
+        setFallbackToast(err);
       },
     });
 
@@ -233,16 +217,22 @@ export default function App() {
   }, [sleepTimer.active, sleepTimer.endOfChapter]);
 
   // --- Audio Control Functions ---
-  const handlePlayBook = (book: Book, chapterIndex: number = 0) => {
-    setActiveBookId(book.id);
-    setActiveChapterIndex(chapterIndex);
-    setActiveParagraphIndex(0);
-
-    const chapter = book.chapters[chapterIndex] || book.chapters[0];
-    if (chapter) {
-      speechEngine.loadChapter(chapter.paragraphs, 0, chapter.wordCount);
-      speechEngine.play();
-    }
+  const handlePlayBook = async (book: Book, chapterIndex?: number, play = true, paragraphIndex?: number) => {
+    const generation = ++openGeneration.current;
+    speechEngine.stop();
+    setLibraryError(null);
+    try {
+      const full = await getBook(book);
+      if (generation !== openGeneration.current) return;
+      const saved = positions.current[book.id];
+      const index = Math.max(0, Math.min(full.chapters.length - 1, chapterIndex ?? saved?.chapterIndex ?? 0));
+      const paragraph = Math.max(0, Math.min(full.chapters[index].paragraphs.length - 1, paragraphIndex ?? (chapterIndex === undefined ? saved?.paragraphIndex ?? 0 : 0)));
+      selection.current = {book: full, chapterIndex: index};
+      setLoadedBook(full); setActiveBookId(full.id); setActiveChapterIndex(index); setActiveParagraphIndex(paragraph);
+      speechEngine.loadChapter(full.chapters[index].paragraphs, paragraph, full.chapters[index].wordCount);
+      setCurrentView('reader');
+      if (play) await speechEngine.play();
+    } catch (error: any) { setLibraryError(error.message); }
   };
 
   const handleTogglePlay = () => {
@@ -250,7 +240,7 @@ export default function App() {
       speechEngine.pause();
     } else {
       if (activeChapter) {
-        if (!speechEngine.getCurrentState().isPlaying) {
+        if (!speechEngine.getCurrentState().hasChapter) {
           speechEngine.loadChapter(activeChapter.paragraphs, activeParagraphIndex, activeChapter.wordCount);
         }
         speechEngine.resume();
@@ -265,6 +255,7 @@ export default function App() {
   const handleSelectChapter = (index: number) => {
     if (!activeBook) return;
     const validIdx = Math.max(0, Math.min(activeBook.chapters.length - 1, index));
+    selection.current = {book: activeBook, chapterIndex: validIdx};
     setActiveChapterIndex(validIdx);
     setActiveParagraphIndex(0);
 
@@ -291,7 +282,7 @@ export default function App() {
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)) {
+      if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes((e.target as HTMLElement).tagName) || (e.target as HTMLElement).isContentEditable) {
         return;
       }
 
@@ -320,7 +311,7 @@ export default function App() {
   }, [isPlaying, activeBook, activeChapterIndex, activeParagraphIndex]);
 
   // --- Bookmark Management ---
-  const handleAddBookmark = (chapterId: string, chapterTitle: string, paragraphIndex: number, snippet: string) => {
+  const handleAddBookmark = async (chapterId: string, chapterTitle: string, paragraphIndex: number, snippet: string) => {
     if (!activeBook) return;
     const newBm: Bookmark = {
       id: `bm-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -332,49 +323,44 @@ export default function App() {
       createdAt: new Date().toISOString(),
       timestamp: new Date().toISOString(),
     };
-    setBookmarks(prev => [newBm, ...prev]);
+    try {
+      const saved = await libraryRequest('/api/bookmarks', 'POST', newBm);
+      setBookmarks(prev => [saved.bookmark, ...prev]);
+    } catch (error: any) { setLibraryError(error.message); }
   };
 
-  const handleDeleteBookmark = (id: string) => {
-    setBookmarks(prev => prev.filter(b => b.id !== id));
+  const handleDeleteBookmark = async (id: string) => {
+    try { await libraryRequest('/api/bookmarks/' + encodeURIComponent(id), 'DELETE'); setBookmarks(prev => prev.filter(b => b.id !== id)); } catch (error: any) { setLibraryError(error.message); }
   };
 
-  const handleSelectBookmark = (bookId: string, chapterId: string, paragraphIndex: number) => {
-    const targetBook = books.find(b => b.id === bookId);
-    if (!targetBook) return;
-
-    setActiveBookId(targetBook.id);
-    const chapterIdx = targetBook.chapters.findIndex(c => c.id === chapterId);
-    const validChapterIdx = chapterIdx !== -1 ? chapterIdx : 0;
-    setActiveChapterIndex(validChapterIdx);
-    setActiveParagraphIndex(paragraphIndex);
-
-    setCurrentView('reader');
-
-    const chap = targetBook.chapters[validChapterIdx];
-    if (chap) {
-      speechEngine.loadChapter(chap.paragraphs, paragraphIndex, chap.wordCount);
-      speechEngine.play();
-    }
+  const handleSelectBookmark = async (bookId: string, chapterId: string, paragraphIndex: number) => {
+    const target = books.find(b => b.id === bookId);
+    if (!target) return;
+    try {
+      const full = await getBook(target);
+      await handlePlayBook(full, Math.max(0, full.chapters.findIndex(c => c.id === chapterId)), true, paragraphIndex);
+    } catch (error: any) { setLibraryError(error.message); }
   };
 
-  // --- Custom ePub Import ---
-  const handleBookImported = (newBook: Book) => {
-    setBooks(prev => [newBook, ...prev]);
-    handlePlayBook(newBook, 0);
-    setCurrentView('reader');
+  const handleBookImported = async (newBook: Book) => {
+    const result = await libraryRequest('/api/books', 'POST', newBook);
+    setBooks(prev => [result.book, ...prev.filter(b => b.id !== newBook.id)]);
   };
-
-  const handleDeleteBook = (bookId: string) => {
-    setBooks(prev => prev.filter(b => b.id !== bookId));
-    if (activeBookId === bookId) {
-      speechEngine.stop();
-      setActiveBookId(null);
-    }
+  const handleDeleteBook = async (bookId: string) => {
+    try {
+      await libraryRequest('/api/books/' + encodeURIComponent(bookId), 'DELETE');
+      setBooks(prev => prev.filter(b => b.id !== bookId));
+      setBookmarks(prev => prev.filter(b => b.bookId !== bookId));
+      delete positions.current[bookId];
+      if (activeBookId === bookId) {
+        openGeneration.current++; speechEngine.stop(); selection.current = null;
+        setLoadedBook(null); setActiveBookId(null); setCurrentView('library');
+      }
+    } catch (error: any) { setLibraryError(error.message); }
   };
 
   // --- Quick Test ePub Generator (for immediate audio testing if desired) ---
-  const handleLoadQuickSample = () => {
+  const handleLoadQuickSample = async () => {
     const sampleParagraphs = [
       'In the name of contemplative wisdom and clarity. Know that the heart of man is like a polished mirror reflecting whichever world it turns toward.',
       'When the mind becomes tranquil through disciplined contemplation, internal anxieties dissipate, allowing cognitive and spiritual balance to flourish.',
@@ -386,14 +372,13 @@ export default function App() {
     const quickSampleBook: Book = {
       id: `sample-${Date.now()}`,
       title: 'The Discipline of the Mind & Spirit',
-      author: 'Imam Al-Ghazali & Contemporary Commentary',
+      author: 'Audiobook Studio demo text',
       category: 'Islamic',
       description: 'An introductory discourse on emotional equanimity, cognitive contemplation, and inner peace.',
       totalWords: wordCount,
       totalDurationSec: Math.max(20, Math.round((wordCount / 140) * 60)),
       uploadedAt: new Date().toISOString(),
       isCustomUpload: true,
-      rating: 4.9,
       tags: ['Islamic', 'Psychology', 'Mindfulness'],
       chapters: [
         {
@@ -408,9 +393,7 @@ export default function App() {
       ],
     };
 
-    setBooks(prev => [quickSampleBook, ...prev]);
-    handlePlayBook(quickSampleBook, 0);
-    setCurrentView('reader');
+    try { await handleBookImported(quickSampleBook); await handlePlayBook(quickSampleBook, 0); } catch (error: any) { setLibraryError(error.message); }
   };
 
   // --- Voice & Speech Settings ---
@@ -481,7 +464,7 @@ export default function App() {
             setCurrentView('library');
           }
         }}
-        onOpenUpload={() => setIsUploadOpen(true)}
+        onOpenUpload={() => { if (!libraryLoading) setIsUploadOpen(true); }}
         onOpenOpenLibrary={() => setIsOpenLibraryOpen(true)}
         onOpenBookmarks={() => setIsBookmarksOpen(true)}
         onOpenVoiceSettings={() => setIsVoiceSettingsOpen(true)}
@@ -493,6 +476,8 @@ export default function App() {
         onToggleTheme={toggleTheme}
       />
 
+      {libraryLoading && <p role="status" className="px-6 py-3 text-sm">Loading your library…</p>}
+      {libraryError && <div role="alert" className="px-6 py-3 text-sm bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-200">{libraryError} <button onClick={loadLibrary} className="underline ml-2">Retry loading</button></div>}
       {/* Dynamic Engine Notification Toast */}
       {fallbackToast && (
         <div className="fixed top-20 right-4 z-50 max-w-sm p-3.5 rounded-2xl bg-emerald-950/90 dark:bg-slate-850/95 border border-emerald-500/50 text-white shadow-xl backdrop-blur-md animate-fade-in flex items-center justify-between gap-3 text-xs">
@@ -517,16 +502,8 @@ export default function App() {
             selectedCategory={selectedCategory}
             onSelectCategory={setSelectedCategory}
             searchQuery={searchQuery}
-            onPlayBook={(book, chIdx) => {
-              handlePlayBook(book, chIdx || 0);
-              setCurrentView('reader');
-            }}
-            onOpenReader={(book) => {
-              setActiveBookId(book.id);
-              setActiveChapterIndex(0);
-              setActiveParagraphIndex(0);
-              setCurrentView('reader');
-            }}
+            onPlayBook={(book) => { void handlePlayBook(book); }}
+            onOpenReader={(book) => { void handlePlayBook(book, undefined, false); }}
             onDeleteBook={handleDeleteBook}
             onOpenUpload={() => setIsUploadOpen(true)}
             onOpenOpenLibrary={() => setIsOpenLibraryOpen(true)}

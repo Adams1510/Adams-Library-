@@ -80,7 +80,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   const sortedBooks = [...filteredBooks].sort((a, b) => {
     if (sortBy === 'duration') return b.totalDurationSec - a.totalDurationSec;
     if (sortBy === 'title') return a.title.localeCompare(b.title);
-    if (sortBy === 'chapters') return b.chapters.length - a.chapters.length;
+    if (sortBy === 'chapters') return (b.chapterCount ?? b.chapters.length) - (a.chapterCount ?? a.chapters.length);
     return 0; // recommended
   });
 
@@ -106,11 +106,11 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           <div className="max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-950/80 text-emerald-300 border border-emerald-800/80 mb-3">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>System Ready for First ePub Upload</span>
+              <span>Read and listen at your own pace</span>
             </div>
             
             <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-white tracking-tight">
-              Custom Audiobook <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-200">Synthesis Engine</span>
+              Your personal <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-200">listening library</span>
             </h1>
             
             <p className="text-sm sm:text-base text-slate-300 mt-2 leading-relaxed">
@@ -241,15 +241,15 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           <div className="max-w-md mx-auto space-y-2">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-950/90 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
               <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-              <span>Library Pristine & Clean</span>
+              <span>Your library is empty</span>
             </div>
             
             <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-slate-100">
-              Ready to Receive Your First ePub
+              Add your first book
             </h3>
             
             <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-              No placeholder books are present. Drop any standard electronic book (.epub) or text document to automatically parse chapters and synthesize AI speech.
+              Upload EPUB or text files to read and listen. Device voices work without an API key; AI voices need Gemini setup.
             </p>
           </div>
 
@@ -280,7 +280,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
               title="Test audio player immediately with a quick sample chapter"
             >
               <Plus className="w-4 h-4 text-emerald-500" />
-              <span>Generate Quick Test ePub</span>
+              <span>Try a short demo</span>
             </button>
           </div>
 

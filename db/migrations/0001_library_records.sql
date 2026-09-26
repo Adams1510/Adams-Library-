@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS library_records (
+  key TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL
+);

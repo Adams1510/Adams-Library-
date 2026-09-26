@@ -1,0 +1,16 @@
+import JSZip from 'jszip';
+import {mkdir, writeFile} from 'node:fs/promises';
+const out = new URL('../../fixtures/', import.meta.url);
+await mkdir(out, {recursive:true});
+const zip = new JSZip();
+zip.file('mimetype', 'application/epub+zip');
+zip.file('META-INF/container.xml', '<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="EPUB/Package/book.opf"/></rootfiles></container>');
+zip.file('EPUB/Package/book.opf', `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Import Verification Book</dc:title><dc:creator>Local Test Fixture</dc:creator></metadata><manifest><item id="second" href="../Text/chapter%202.xhtml" media-type="application/xhtml+xml"/><item id="first" href="../Text/chapter%201.xhtml#start" media-type="application/xhtml+xml"/><item id="short" href="../Text/short.xhtml" media-type="application/xhtml+xml"/><item id="nav" href="../Text/nav.xhtml" media-type="application/xhtml+xml" properties="nav"/></manifest><spine><itemref idref="first"/><itemref idref="second"/><itemref idref="short"/><itemref idref="nav" linear="no"/></spine></package>`);
+zip.file('EPUB/Text/chapter 1.xhtml', `<html><head><title>Hidden title</title><style>hidden style</style></head><body><h1>First Chapter</h1><p>${'This is a long paragraph preserved for narration. '.repeat(150)}END_MARKER</p></body></html>`);
+zip.file('EPUB/Text/chapter 2.xhtml', '<html><body><h1>Second Chapter</h1><p>A short chapter follows the first in spine order &amp; keeps entities intact.</p></body></html>');
+zip.file('EPUB/Text/short.xhtml', '<html><body><h1>Third Chapter</h1><p>The end.</p></body></html>');
+zip.file('EPUB/Text/nav.xhtml', '<html><body><nav>Navigation is not a chapter.</nav></body></html>');
+await writeFile(new URL('verification.epub', out), await zip.generateAsync({type:'nodebuffer'}));
+await writeFile(new URL('notes.TXT', out), 'A small document for testing multiple uploads.\r\n\r\nThe second paragraph is preserved.');
+await writeFile(new URL('empty.txt', out), '  ');
+console.log('Created local EPUB and text fixtures.');

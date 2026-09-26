@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Book, BookCategory, Chapter } from '../types';
 import {
   Search,
@@ -41,6 +41,7 @@ export const OpenLibraryModal: React.FC<OpenLibraryModalProps> = ({
   onClose,
   onImportBook,
 }) => {
+  const latestSearch = useRef(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [results, setResults] = useState<OpenLibraryBook[]>([]);
@@ -58,6 +59,7 @@ export const OpenLibraryModal: React.FC<OpenLibraryModalProps> = ({
   ];
 
   const performSearch = async (query: string, cat: string) => {
+    const requestId = ++latestSearch.current;
     setIsLoading(true);
     setError(null);
     try {
@@ -65,12 +67,12 @@ export const OpenLibraryModal: React.FC<OpenLibraryModalProps> = ({
       const res = await fetch(url);
       if (!res.ok) throw new Error('Search request failed');
       const data = await res.json();
-      setResults(data.books || []);
+      if (requestId === latestSearch.current) setResults(data.books || []);
     } catch (err: any) {
       console.error('Open Library search failed:', err);
-      setError('Unable to fetch external books from Open Library. Please verify your connection.');
+      if (requestId === latestSearch.current) setError('Unable to fetch external books from Open Library. Please verify your connection.');
     } finally {
-      setIsLoading(false);
+      if (requestId === latestSearch.current) setIsLoading(false);
     }
   };
 
@@ -85,78 +87,6 @@ export const OpenLibraryModal: React.FC<OpenLibraryModalProps> = ({
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     performSearch(searchTerm, selectedCategory);
-  };
-
-  const handleImportToLibrary = async (olBook: OpenLibraryBook) => {
-    setImportingKey(olBook.openLibraryKey);
-    try {
-      // 1. Fetch detailed description if available
-      let detailedDescription = '';
-      try {
-        const detRes = await fetch(`/api/open-library/book/${encodeURIComponent(olBook.openLibraryKey)}`);
-        if (detRes.ok) {
-          const detData = await detRes.json();
-          detailedDescription = detData.description || '';
-        }
-      } catch (e) {
-        // non-blocking
-      }
-
-      // Determine category heuristic
-      let cat: BookCategory = 'Contemporary';
-      const subStr = (olBook.subjects || []).join(' ').toLowerCase() + ' ' + olBook.title.toLowerCase();
-      if (subStr.includes('islam') || subStr.includes('quran') || subStr.includes('sufi') || subStr.includes('theology')) {
-        cat = 'Islamic';
-      } else if (subStr.includes('psych') || subStr.includes('mind') || subStr.includes('cognit') || subStr.includes('behavior')) {
-        cat = 'Psychological';
-      }
-
-      // Generate structured audio chapters with contextual synopsis
-      const desc = detailedDescription || `Indexed work "${olBook.title}" by ${olBook.author}. Published originally in ${olBook.firstPublishYear || 'classic era'}.`;
-      
-      const chapter1Paragraphs = [
-        `Welcome to the audio exploration of "${olBook.title}" authored by ${olBook.author}.`,
-        desc,
-        `Subjects and themes covered in this volume include: ${(olBook.subjects || ['Literature', 'Philosophy']).slice(0, 4).join(', ')}.`,
-        `This record has been imported from the open catalog of Open Library into your personal Audiobook Studio collection. AI voice narration and chapter segmentation are enabled.`,
-      ];
-
-      const chapter1Text = chapter1Paragraphs.join('\n\n');
-      const wordCount = chapter1Text.split(/\s+/).length;
-
-      const newBook: Book = {
-        id: `ol-${olBook.openLibraryKey}-${Date.now()}`,
-        title: olBook.title,
-        author: olBook.author,
-        category: cat,
-        description: desc,
-        coverImage: olBook.coverImage,
-        uploadedAt: new Date().toISOString(),
-        isCustomUpload: true,
-        rating: 4.8,
-        tags: olBook.subjects?.slice(0, 4) || [cat, 'Open Library'],
-        totalWords: wordCount,
-        totalDurationSec: Math.max(20, Math.round((wordCount / 140) * 60)),
-        chapters: [
-          {
-            id: `ol-ch1-${Date.now()}`,
-            title: `Introduction & Core Synopsis`,
-            order: 1,
-            content: chapter1Text,
-            paragraphs: chapter1Paragraphs,
-            wordCount,
-            estimatedDurationSec: Math.max(20, Math.round((wordCount / 140) * 60)),
-          },
-        ],
-      };
-
-      onImportBook(newBook);
-      setImportedKeys(prev => new Set(prev).add(olBook.openLibraryKey));
-    } catch (err) {
-      console.error('Failed to import Open Library book:', err);
-    } finally {
-      setImportingKey(null);
-    }
   };
 
   return (
@@ -175,11 +105,11 @@ export const OpenLibraryModal: React.FC<OpenLibraryModalProps> = ({
                   Open Library Search & Explorer
                 </h3>
                 <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                  Live API Hook
+                  Book discovery
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Search millions of published books, download public domain metadata, and import into your library
+                Search book records. Open the source to find an available EPUB, then upload that file here. Catalog descriptions are not full books.
               </p>
             </div>
           </div>
@@ -319,32 +249,7 @@ export const OpenLibraryModal: React.FC<OpenLibraryModalProps> = ({
                         <ExternalLink className="w-3 h-3" />
                       </a>
 
-                      <button
-                        onClick={() => handleImportToLibrary(b)}
-                        disabled={isImported || isImporting}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                          isImported
-                            ? 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800'
-                            : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'
-                        }`}
-                      >
-                        {isImporting ? (
-                          <>
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            <span>Importing...</span>
-                          </>
-                        ) : isImported ? (
-                          <>
-                            <Check className="w-3.5 h-3.5" />
-                            <span>In Library</span>
-                          </>
-                        ) : (
-                          <>
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>Add to Studio</span>
-                          </>
-                        )}
-                      </button>
+<span className="text-[11px] text-slate-500">Catalog record only</span>
                     </div>
                   </div>
                 );

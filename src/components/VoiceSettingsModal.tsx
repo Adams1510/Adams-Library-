@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import { audioBlob } from '../utils/audio';
+import { speechEngine } from '../services/speechEngine';
+import React, { useState, useRef, useEffect } from 'react';
 import { TtsEngine, VoiceOption } from '../types';
 import { AVAILABLE_VOICES } from '../data/sampleBooks';
 import {
@@ -41,9 +43,24 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
 }) => {
   const [testingVoiceId, setTestingVoiceId] = useState<string | null>(null);
 
+  const preview = useRef<HTMLAudioElement | null>(null);
+  const previewUrl = useRef<string | null>(null);
+  const previewGeneration = useRef(0);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const stopPreview = () => {
+    previewGeneration.current++;
+    preview.current?.pause(); preview.current = null;
+    if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
+    previewUrl.current = null;
+  };
+  useEffect(() => { if (!isOpen) { stopPreview(); setTestingVoiceId(null); } return stopPreview; }, [isOpen]);
   if (!isOpen) return null;
 
   const testVoiceSample = async (voice: typeof AVAILABLE_VOICES[0]) => {
+    stopPreview();
+    speechEngine.pause();
+    const generation = previewGeneration.current;
+    setPreviewError(null);
     setTestingVoiceId(voice.id);
     const sampleText = 'Verily, with every hardship comes ease and profound stillness of the heart.';
 
@@ -62,7 +79,10 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
         if (res.ok) {
           const data = await res.json();
           if (data.audioBase64) {
-            const audio = new Audio(`data:${data.mimeType || 'audio/mp3'};base64,${data.audioBase64}`);
+            if (generation !== previewGeneration.current) return;
+            previewUrl.current = URL.createObjectURL(audioBlob(data.audioBase64, data.mimeType || 'audio/L16;rate=24000'));
+            const audio = new Audio(previewUrl.current);
+            preview.current = audio;
             audio.playbackRate = playbackRate;
             await audio.play();
             audio.onended = () => setTestingVoiceId(null);
@@ -72,6 +92,8 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
         }
       }
 
+      if (generation !== previewGeneration.current) return;
+      if (voice.engine === 'gemini') setPreviewError('AI voice is unavailable. This preview uses your device voice.');
       // Browser fallback speech
       if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         window.speechSynthesis.cancel();
@@ -85,7 +107,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
         setTestingVoiceId(null);
       }
     } catch (e) {
-      console.warn('Voice preview error:', e);
+      setPreviewError('Unable to play this voice. Please try again.');
       setTestingVoiceId(null);
     }
   };
@@ -94,6 +116,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fade-in">
       <div className="relative w-full max-w-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         
+        {previewError && <p role="alert" className="text-sm text-amber-600 mb-3">{previewError}</p>}
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center gap-3">

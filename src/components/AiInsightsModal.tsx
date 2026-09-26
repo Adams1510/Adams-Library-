@@ -29,6 +29,7 @@ export const AiInsightsModal: React.FC<AiInsightsModalProps> = ({
     if (!chapter) return;
     setLoading(true);
     setError(null);
+    setInsights(null);
 
     try {
       const res = await fetch('/api/chapter-insights', {
@@ -37,34 +38,21 @@ export const AiInsightsModal: React.FC<AiInsightsModalProps> = ({
         body: JSON.stringify({
           bookTitle,
           chapterTitle: chapter.title,
-          textContent: chapter.content.substring(0, 3500),
+          textContent: chapter.content.substring(0, 60000),
         }),
       });
 
       if (!res.ok) {
-        throw new Error('Failed to generate insights from Gemini.');
+        const problem = await res.json().catch(() => ({}));
+        throw new Error(problem.error || 'AI insights are unavailable. Please try again.');
       }
 
       const data = await res.json();
       setInsights(data);
     } catch (e: any) {
       console.warn('AI Insights error:', e);
-      // Fallback heuristics if offline
-      setInsights({
-        takeaways: [
-          'Examines the profound synthesis between spiritual discipline and internal human character.',
-          'Emphasizes consistent contemplative practice as a safeguard for cognitive and emotional resilience.',
-          'Highlights the connection between intention, ethical reflection, and daily habits.',
-        ],
-        reflectionQuestions: [
-          'How does this chapter’s core lesson challenge your immediate daily reaction patterns?',
-          'What practical step can you implement today to internalize this reflection?',
-        ],
-        vocabulary: [
-          { term: 'Muraqabah (Contemplation)', definition: 'The spiritual mindfulness of being aware of the divine presence.' },
-          { term: 'Metacognition', definition: 'The awareness and understanding of one’s own thought processes.' },
-        ],
-      });
+      setInsights(null);
+      setError(e?.message || 'Unable to generate insights.');
     } finally {
       setLoading(false);
     }
@@ -94,7 +82,7 @@ export const AiInsightsModal: React.FC<AiInsightsModalProps> = ({
                   Chapter AI Companion
                 </h3>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                  Gemini 3.7 Flash
+                  AI insights
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-md">
@@ -113,6 +101,7 @@ export const AiInsightsModal: React.FC<AiInsightsModalProps> = ({
 
         {/* Modal Body */}
         <div className="py-6 overflow-y-auto space-y-6 flex-1 pr-1">
+          {error && <p role="alert" className="text-sm text-rose-600 dark:text-rose-300">{error}</p>}
           {loading ? (
             <div className="flex flex-col items-center justify-center py-16 space-y-4">
               <Loader2 className="w-10 h-10 text-emerald-500 animate-spin" />

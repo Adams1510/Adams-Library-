@@ -19,6 +19,7 @@ export interface Book {
   coverImage?: string;
   coverTheme?: string;
   chapters: Chapter[];
+  chapterCount?: number;
   totalWords: number;
   totalDurationSec: number;
   uploadedAt: string;

@@ -188,7 +188,7 @@ export const BookCard: React.FC<BookCardProps> = ({
             </span>
             <span className="flex items-center gap-1">
               <FileText className="w-3.5 h-3.5" />
-              {book.chapters.length} {book.chapters.length === 1 ? 'chapter' : 'chapters'}
+              {(book.chapterCount ?? book.chapters.length)} {(book.chapterCount ?? book.chapters.length) === 1 ? 'chapter' : 'chapters'}
             </span>
             <span>
               {book.totalWords.toLocaleString()} words

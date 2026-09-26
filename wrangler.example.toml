@@ -1,0 +1,23 @@
+name = "adams-library"
+main = "dist/worker/index.js"
+compatibility_date = "2026-09-26"
+
+[assets]
+directory = "./dist/client"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "adams-library"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "db/migrations"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "adams-library-books"
+
+[vars]
+# Set GEMINI_API_KEY as a Worker secret; never commit it here.
+# GEMINI_TEXT_MODEL = "gemini-3.7-flash"
+# GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview"
