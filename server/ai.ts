@@ -1,4 +1,4 @@
-import {GoogleGenAI, Modality, Type} from '@google/genai';
+import {GoogleGenAI, Type} from '@google/genai';
 import type {RouteApp} from './router.ts';
 export function registerAiRoutes(app: RouteApp, env: Record<string, string | undefined>) {
 // Lazy/safe initialization for GoogleGenAI
@@ -78,7 +78,7 @@ app.get('/api/health', (req, res) => {
 // 2. Gemini Text-To-Speech endpoint with caching & rate limit mitigation
 app.post('/api/tts', async (req, res) => {
   try {
-    const { text, voiceName = 'Kore', rate = 1.0 } = req.body;
+    const { text, voiceName = 'Kore', style = 'Warm, clear audiobook narration' } = req.body;
 
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: 'Text is required for TTS synthesis.' });
@@ -96,9 +96,11 @@ app.post('/api/tts', async (req, res) => {
     // Limit chunk to reasonable size for fastest response
     if (text.length > 1000) return res.status(400).json({error: 'Narration segments must be at most 1000 characters.'});
     const cleanText = text.trim();
-    const validVoices = ['Kore', 'Puck', 'Fenrir', 'Zephyr', 'Charon'];
-    const chosenVoice = validVoices.includes(voiceName) ? voiceName : 'Kore';
-    const cacheKey = `${chosenVoice}:${cleanText}`;
+    const validVoices = ['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Aoede', 'Callirrhoe', 'Autonoe', 'Enceladus', 'Iapetus', 'Umbriel', 'Algieba', 'Despina', 'Erinome', 'Algenib', 'Rasalgethi', 'Laomedeia', 'Achernar', 'Alnilam', 'Schedar', 'Gacrux', 'Pulcherrima', 'Achird', 'Zubenelgenubi', 'Vindemiatrix', 'Sadachbia', 'Sadaltager', 'Sulafat'];
+    const safeCustomVoiceId = typeof voiceName === 'string' && /^voice_[a-zA-Z0-9_-]{1,90}$/.test(voiceName);
+    const chosenVoice = validVoices.includes(voiceName) || safeCustomVoiceId ? voiceName : 'Kore';
+    const cleanStyle = typeof style === 'string' ? style.trim().slice(0, 160) : 'Warm, clear audiobook narration';
+    const cacheKey = `${chosenVoice}:${cleanStyle}:${cleanText}`;
 
     // Return from cache immediately if present
     const cached = ttsCache.get(cacheKey);
@@ -112,52 +114,40 @@ app.post('/api/tts', async (req, res) => {
       });
     }
 
-    let response: any = null;
+    let interaction: any;
     let attempts = 0;
-    const maxAttempts = 2;
-
-    while (attempts < maxAttempts) {
+    while (attempts < 2) {
       attempts++;
       try {
-        response = await ai.models.generateContent({
-          model: env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview',
-          contents: [{ parts: [{ text: cleanText }] }],
-          config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: chosenVoice },
-              },
-            },
-          },
+        const apiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY! },
+          body: JSON.stringify({
+            model: env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-lite-tts',
+            input: [{ type: 'user_input', content: [{ type: 'text', text: cleanText, annotations: [{ type: 'speech_metadata', style: cleanStyle }] }] }],
+            response_format: { type: 'audio', mime_type: 'audio/l16', sample_rate: 24000 },
+            generation_config: { speech_config: [{ voice: chosenVoice }] },
+          }),
+          signal: AbortSignal.timeout(30000),
         });
-        break; // Success
-      } catch (genErr: any) {
-        const errMsg = genErr?.message || String(genErr);
-        const isQuotaOrDemand = errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('503') || errMsg.includes('UNAVAILABLE');
-
-        if (isQuotaOrDemand && attempts < maxAttempts) {
-          await sleep(600);
-          continue;
+        if (!apiResponse.ok) {
+          const detail = await apiResponse.text();
+          const apiError = new Error(`Gemini TTS request failed (${apiResponse.status}): ${detail.slice(0, 250)}`);
+          if ([429, 500, 503].includes(apiResponse.status) && attempts < 2) { await sleep(600); continue; }
+          throw apiError;
         }
-
-        // Return clean fallback response so the client seamlessly uses Device Speech
-        console.warn(`[TTS] Gemini TTS rate limit/quota reached: switching seamlessly to browser speech engine.`);
-        return res.json({
-          audioBase64: null,
-          useFallback: true,
-          rateLimited: true,
-          error: 'Gemini TTS quota reached. Seamlessly playing with Device Native Speech.',
-        });
+        interaction = await apiResponse.json();
+        break;
+      } catch (genErr: any) {
+        if (attempts < 2 && /429|500|503|RESOURCE_EXHAUSTED|UNAVAILABLE/i.test(genErr?.message || '')) { await sleep(600); continue; }
+        console.warn('[TTS] Gemini TTS unavailable; browser speech fallback will be used.');
+        return res.json({ audioBase64: null, useFallback: true, rateLimited: true, error: 'Gemini narration is unavailable or its free quota is exhausted. Using device speech.' });
       }
     }
 
-    const candidate = response?.candidates?.[0];
-    const audioPart = candidate?.content?.parts?.find((p: any) => p.inlineData?.data);
-
-    if (audioPart?.inlineData?.data) {
-      const audioBase64 = audioPart.inlineData.data;
-      const mimeType = audioPart.inlineData.mimeType || 'audio/L16;rate=24000';
+    const audioBase64 = interaction?.output_audio?.data;
+    const mimeType = interaction?.output_audio?.mime_type || 'audio/L16;rate=24000';
+    if (audioBase64) {
 
       // Save in LRU cache
       if (ttsCache.size >= MAX_TTS_CACHE) {

@@ -95,6 +95,7 @@ export default function App() {
   const [pitch, setPitch] = useState<number>(1.0);
   const [ttsEngine, setTtsEngine] = useState<TtsEngine>('browser');
   const [geminiVoiceName, setGeminiVoiceName] = useState<string>('Kore');
+  const [geminiStyle, setGeminiStyle] = useState<string>(() => localStorage.getItem('adams-gemini-style') || 'Warm, clear audiobook narration');
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const [ambientSoundType, setAmbientSoundType] = useState<'none' | 'rain' | 'library' | 'stream' | 'waves'>('none');
   const [ambientVolume, setAmbientVolume] = useState<number>(0.3);
@@ -194,9 +195,10 @@ export default function App() {
     });
 
     speechEngine.setEngine(ttsEngine, geminiVoiceName);
+    speechEngine.setGeminiStyle(geminiStyle);
     speechEngine.setPlaybackRate(playbackRate);
     speechEngine.setPitch(pitch);
-  }, [activeBookId, activeChapterIndex, ttsEngine, geminiVoiceName, playbackRate, pitch, handleChapterComplete]);
+  }, [activeBookId, activeChapterIndex, ttsEngine, geminiVoiceName, geminiStyle, playbackRate, pitch, handleChapterComplete]);
 
   // Sleep Timer Countdown Interval
   useEffect(() => {
@@ -402,6 +404,9 @@ export default function App() {
     setGeminiVoiceName(geminiVoice);
     speechEngine.setEngine(engine, geminiVoice);
   };
+  const handleChangeGeminiStyle = (style: string) => {
+    setGeminiStyle(style); localStorage.setItem('adams-gemini-style', style); speechEngine.setGeminiStyle(style);
+  };
 
   const handleChangePlaybackRate = (rate: number) => {
     setPlaybackRate(rate);
@@ -588,10 +593,12 @@ export default function App() {
         onClose={() => setIsVoiceSettingsOpen(false)}
         currentEngine={ttsEngine}
         currentGeminiVoice={geminiVoiceName}
+        geminiStyle={geminiStyle}
         playbackRate={playbackRate}
         pitch={pitch}
         autoScroll={autoScroll}
         onSelectEngineAndVoice={handleSelectEngineAndVoice}
+        onChangeGeminiStyle={handleChangeGeminiStyle}
         onChangePlaybackRate={handleChangePlaybackRate}
         onChangePitch={handleChangePitch}
         onToggleAutoScroll={setAutoScroll}

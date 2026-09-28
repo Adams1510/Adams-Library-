@@ -57,7 +57,7 @@ export interface VoiceOption {
   id: string;
   name: string;
   engine: TtsEngine;
-  geminiVoiceName?: 'Kore' | 'Puck' | 'Fenrir' | 'Zephyr' | 'Charon';
+  geminiVoiceName?: string;
   browserVoiceURI?: string;
   gender: 'Female' | 'Male' | 'Neutral';
   description: string;

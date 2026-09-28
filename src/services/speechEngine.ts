@@ -21,6 +21,7 @@ export class AudiobookSpeechEngine {
   private pitch = 1;
   private engine: TtsEngine = 'browser';
   private geminiVoiceName = 'Kore';
+  private geminiStyle = 'Warm, clear audiobook narration';
   private selectedBrowserVoice: SpeechSynthesisVoice | null = null;
   private callbacks: SpeechCallbacks = {};
   private progressInterval: ReturnType<typeof setInterval> | null = null;
@@ -41,6 +42,13 @@ export class AudiobookSpeechEngine {
     if (engine === this.engine && voice === this.geminiVoiceName) return;
     this.engine = engine; this.geminiVoiceName = voice; this.geminiCooldownUntil = 0;
     if (this.isPlaying) void this.speak();
+  }
+  setGeminiStyle(style: string) {
+    const next = style.slice(0, 160);
+    if (next === this.geminiStyle) return;
+    this.geminiStyle = next;
+    this.cache.clear(); this.cacheBytes = 0;
+    if (this.isPlaying && this.engine === 'gemini') void this.speak();
   }
   setPlaybackRate(rate: number) {
     const next = Math.max(0.5, Math.min(2.5, rate));
@@ -127,7 +135,7 @@ export class AudiobookSpeechEngine {
     this.paragraphSeconds = 0; this.callbacks.onParagraphChange?.(this.currentParagraphIndex);
     if (this.engine === 'gemini' && !this.isGeminiCooldownActive()) {
       try {
-        const key = `${this.geminiVoiceName}:${text}`;
+        const key = `${this.geminiVoiceName}:${this.geminiStyle}:${text}`;
         let blob = this.cache.get(key);
         if (!blob) {
           const controller = new AbortController(); this.request = controller;
@@ -135,7 +143,7 @@ export class AudiobookSpeechEngine {
           let data: any;
           try {
             const res = await fetch('/api/tts', {method: 'POST', headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({text, voiceName: this.geminiVoiceName}), signal: controller.signal});
+              body: JSON.stringify({text, voiceName: this.geminiVoiceName, style: this.geminiStyle}), signal: controller.signal});
             data = await res.json();
             if (!res.ok || !data.audioBase64) throw new Error(data.message || data.error || 'AI voice is unavailable.');
           } finally { clearTimeout(timeout); if (this.request === controller) this.request = null; }

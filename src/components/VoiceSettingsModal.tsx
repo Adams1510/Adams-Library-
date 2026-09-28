@@ -19,10 +19,12 @@ interface VoiceSettingsModalProps {
   onClose: () => void;
   currentEngine: TtsEngine;
   currentGeminiVoice: string;
+  geminiStyle: string;
   playbackRate: number;
   pitch: number;
   autoScroll: boolean;
   onSelectEngineAndVoice: (engine: TtsEngine, geminiVoice: string) => void;
+  onChangeGeminiStyle: (style: string) => void;
   onChangePlaybackRate: (rate: number) => void;
   onChangePitch: (pitch: number) => void;
   onToggleAutoScroll: (enabled: boolean) => void;
@@ -33,10 +35,12 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   onClose,
   currentEngine,
   currentGeminiVoice,
+  geminiStyle,
   playbackRate,
   pitch,
   autoScroll,
   onSelectEngineAndVoice,
+  onChangeGeminiStyle,
   onChangePlaybackRate,
   onChangePitch,
   onToggleAutoScroll,
@@ -69,9 +73,10 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
         const res = await fetch('/api/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            text: sampleText,
-            voiceName: voice.geminiVoiceName,
+            body: JSON.stringify({
+              text: sampleText,
+              voiceName: voice.geminiVoiceName,
+              style: geminiStyle,
             rate: playbackRate,
           }),
         });
@@ -215,6 +220,36 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
                 );
               })}
             </div>
+          </div>
+
+          <div className="space-y-2 border-t border-slate-200 dark:border-slate-800 pt-4">
+            <label htmlFor="gemini-style" className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+              Gemini speaking style
+            </label>
+            <select id="gemini-style" value={['Warm, clear audiobook narration', 'Calm and reflective, with gentle pacing', 'Bright and conversational', 'Formal and measured', 'Dramatic storytelling'].includes(geminiStyle) ? geminiStyle : 'custom'}
+              onChange={(event) => onChangeGeminiStyle(event.target.value === 'custom' ? geminiStyle : event.target.value)}
+              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100">
+              <option>Warm, clear audiobook narration</option>
+              <option>Calm and reflective, with gentle pacing</option>
+              <option>Bright and conversational</option>
+              <option>Formal and measured</option>
+              <option>Dramatic storytelling</option>
+              {!['Warm, clear audiobook narration', 'Calm and reflective, with gentle pacing', 'Bright and conversational', 'Formal and measured', 'Dramatic storytelling'].includes(geminiStyle) && <option value="custom">Custom style</option>}
+              <option value="custom">Custom style…</option>
+            </select>
+            <input aria-label="Custom Gemini speaking style" value={geminiStyle} maxLength={160}
+              onChange={(event) => onChangeGeminiStyle(event.target.value)}
+              placeholder="Describe tone, pace, or accent"
+              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100" />
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">Gemini 3.8 Flash-Lite offers controllable narration on Google’s free API tier. Google may use free-tier requests to improve its products. Browser voices are free and stay on your device.</p>
+            <label htmlFor="custom-gemini-voice" className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider pt-2">
+              Custom Gemini voice ID (optional)
+            </label>
+            <input id="custom-gemini-voice" value={currentGeminiVoice} maxLength={100}
+              onChange={(event) => onSelectEngineAndVoice('gemini', event.target.value.trim() || 'Kore')}
+              placeholder="Choose a voice above or paste a voice_… ID"
+              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100" />
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">You can create custom personas in Google AI Studio, then paste their ID here.</p>
           </div>
 
           {/* Speed & Auto-scroll Controls */}
