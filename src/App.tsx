@@ -96,6 +96,7 @@ export default function App() {
   const [ttsEngine, setTtsEngine] = useState<TtsEngine>('browser');
   const [geminiVoiceName, setGeminiVoiceName] = useState<string>('Kore');
   const [geminiStyle, setGeminiStyle] = useState<string>(() => localStorage.getItem('adams-gemini-style') || 'Warm, clear audiobook narration');
+  const [browserVoiceURI, setBrowserVoiceURI] = useState<string>(() => localStorage.getItem('adams-browser-voice') || '');
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const [ambientSoundType, setAmbientSoundType] = useState<'none' | 'rain' | 'library' | 'stream' | 'waves'>('none');
   const [ambientVolume, setAmbientVolume] = useState<number>(0.3);
@@ -196,9 +197,11 @@ export default function App() {
 
     speechEngine.setEngine(ttsEngine, geminiVoiceName);
     speechEngine.setGeminiStyle(geminiStyle);
+    const availableVoice = speechEngine.getAvailableBrowserVoices().find((voice) => voice.voiceURI === browserVoiceURI) || null;
+    speechEngine.setBrowserVoice(availableVoice);
     speechEngine.setPlaybackRate(playbackRate);
     speechEngine.setPitch(pitch);
-  }, [activeBookId, activeChapterIndex, ttsEngine, geminiVoiceName, geminiStyle, playbackRate, pitch, handleChapterComplete]);
+  }, [activeBookId, activeChapterIndex, ttsEngine, geminiVoiceName, geminiStyle, browserVoiceURI, playbackRate, pitch, handleChapterComplete]);
 
   // Sleep Timer Countdown Interval
   useEffect(() => {
@@ -407,6 +410,10 @@ export default function App() {
   const handleChangeGeminiStyle = (style: string) => {
     setGeminiStyle(style); localStorage.setItem('adams-gemini-style', style); speechEngine.setGeminiStyle(style);
   };
+  const handleSelectBrowserVoice = (voiceURI: string) => {
+    setBrowserVoiceURI(voiceURI); localStorage.setItem('adams-browser-voice', voiceURI);
+    speechEngine.setBrowserVoice(speechEngine.getAvailableBrowserVoices().find((voice) => voice.voiceURI === voiceURI) || null);
+  };
 
   const handleChangePlaybackRate = (rate: number) => {
     setPlaybackRate(rate);
@@ -594,11 +601,13 @@ export default function App() {
         currentEngine={ttsEngine}
         currentGeminiVoice={geminiVoiceName}
         geminiStyle={geminiStyle}
+        browserVoiceURI={browserVoiceURI}
         playbackRate={playbackRate}
         pitch={pitch}
         autoScroll={autoScroll}
         onSelectEngineAndVoice={handleSelectEngineAndVoice}
         onChangeGeminiStyle={handleChangeGeminiStyle}
+        onSelectBrowserVoice={handleSelectBrowserVoice}
         onChangePlaybackRate={handleChangePlaybackRate}
         onChangePitch={handleChangePitch}
         onToggleAutoScroll={setAutoScroll}

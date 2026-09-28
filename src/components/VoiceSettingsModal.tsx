@@ -20,11 +20,13 @@ interface VoiceSettingsModalProps {
   currentEngine: TtsEngine;
   currentGeminiVoice: string;
   geminiStyle: string;
+  browserVoiceURI: string;
   playbackRate: number;
   pitch: number;
   autoScroll: boolean;
   onSelectEngineAndVoice: (engine: TtsEngine, geminiVoice: string) => void;
   onChangeGeminiStyle: (style: string) => void;
+  onSelectBrowserVoice: (voiceURI: string) => void;
   onChangePlaybackRate: (rate: number) => void;
   onChangePitch: (pitch: number) => void;
   onToggleAutoScroll: (enabled: boolean) => void;
@@ -36,16 +38,19 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   currentEngine,
   currentGeminiVoice,
   geminiStyle,
+  browserVoiceURI,
   playbackRate,
   pitch,
   autoScroll,
   onSelectEngineAndVoice,
   onChangeGeminiStyle,
+  onSelectBrowserVoice,
   onChangePlaybackRate,
   onChangePitch,
   onToggleAutoScroll,
 }) => {
   const [testingVoiceId, setTestingVoiceId] = useState<string | null>(null);
+  const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   const preview = useRef<HTMLAudioElement | null>(null);
   const previewUrl = useRef<string | null>(null);
@@ -58,6 +63,12 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
     previewUrl.current = null;
   };
   useEffect(() => { if (!isOpen) { stopPreview(); setTestingVoiceId(null); } return stopPreview; }, [isOpen]);
+  useEffect(() => {
+    if (!isOpen || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    const refresh = () => setBrowserVoices(window.speechSynthesis.getVoices());
+    refresh(); window.speechSynthesis.addEventListener('voiceschanged', refresh);
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', refresh);
+  }, [isOpen]);
   if (!isOpen) return null;
 
   const testVoiceSample = async (voice: typeof AVAILABLE_VOICES[0]) => {
@@ -223,6 +234,16 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
           </div>
 
           <div className="space-y-2 border-t border-slate-200 dark:border-slate-800 pt-4">
+            <label htmlFor="device-voice" className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Free device voice</label>
+            <select id="device-voice" value={browserVoiceURI} onChange={(event) => onSelectBrowserVoice(event.target.value)}
+              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100">
+              <option value="">Use device default voice</option>
+              {browserVoices.map((voice) => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name} ({voice.lang}){voice.default ? ' • default' : ''}</option>)}
+            </select>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">These voices come from your browser or operating system. The available list varies by device.</p>
+          </div>
+
+          <div className="space-y-2 border-t border-slate-200 dark:border-slate-800 pt-4">
             <label htmlFor="gemini-style" className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
               Gemini speaking style
             </label>
@@ -277,6 +298,16 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
                 <span>1.5x</span>
                 <span>2.5x (Fast)</span>
               </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                <span>Device voice pitch</span><span className="font-mono text-emerald-600 dark:text-emerald-400">{pitch.toFixed(1)}</span>
+              </div>
+              <input type="range" min="0.5" max="1.5" step="0.1" value={pitch}
+                onChange={(event) => onChangePitch(parseFloat(event.target.value))}
+                className="w-full accent-emerald-500 bg-slate-200 dark:bg-slate-800 rounded-lg cursor-pointer h-2" />
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Pitch applies to device speech. Gemini voices use their selected voice and speaking style.</p>
             </div>
 
             <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60">
