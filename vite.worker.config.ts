@@ -2,7 +2,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig({
   build: {
-    outDir: 'dist/worker',
+    outDir: 'dist/server',
     emptyOutDir: false,
     minify: true,
     sourcemap: true,
