@@ -1,5 +1,6 @@
 import {GoogleGenAI, Type} from '@google/genai';
 import type {RouteApp} from './router.ts';
+import {registerTtsRoutes, geminiTtsKey} from './tts.ts';
 export function registerAiRoutes(app: RouteApp, env: Record<string, string | undefined>) {
 // Lazy/safe initialization for GoogleGenAI
 function getGenAI() {
@@ -17,9 +18,6 @@ function getGenAI() {
   });
 }
 
-// In-memory cache for synthesized audio chunks to save quota & speed up playback
-const ttsCache = new Map<string, { audioBase64: string; mimeType: string; timestamp: number }>();
-const MAX_TTS_CACHE = 8;
 
 // Helper to delay for backoff
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -70,114 +68,12 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     hasGeminiKey: !!getGenAI(),
-    cachedTtsCount: ttsCache.size,
+    hasTtsKey: !!geminiTtsKey(env) || !!env.GOOGLE_CLOUD_TTS_API_KEY,
     timestamp: new Date().toISOString(),
   });
 });
 
-// 2. Gemini Text-To-Speech endpoint with caching & rate limit mitigation
-app.post('/api/tts', async (req, res) => {
-  try {
-    const { text, voiceName = 'Kore', style = 'Warm, clear audiobook narration' } = req.body;
-
-    if (!text || typeof text !== 'string') {
-      return res.status(400).json({ error: 'Text is required for TTS synthesis.' });
-    }
-
-    const ai = getGenAI();
-    if (!ai) {
-      return res.json({
-        audioBase64: null,
-        useFallback: true,
-        message: 'Gemini API key is not configured; using high-fidelity device speech.',
-      });
-    }
-
-    // Limit chunk to reasonable size for fastest response
-    if (text.length > 1000) return res.status(400).json({error: 'Narration segments must be at most 1000 characters.'});
-    const cleanText = text.trim();
-    const validVoices = ['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Aoede', 'Callirrhoe', 'Autonoe', 'Enceladus', 'Iapetus', 'Umbriel', 'Algieba', 'Despina', 'Erinome', 'Algenib', 'Rasalgethi', 'Laomedeia', 'Achernar', 'Alnilam', 'Schedar', 'Gacrux', 'Pulcherrima', 'Achird', 'Zubenelgenubi', 'Vindemiatrix', 'Sadachbia', 'Sadaltager', 'Sulafat'];
-    const safeCustomVoiceId = typeof voiceName === 'string' && /^voice_[a-zA-Z0-9_-]{1,90}$/.test(voiceName);
-    const chosenVoice = validVoices.includes(voiceName) || safeCustomVoiceId ? voiceName : 'Kore';
-    const cleanStyle = typeof style === 'string' ? style.trim().slice(0, 160) : 'Warm, clear audiobook narration';
-    const cacheKey = `${chosenVoice}:${cleanStyle}:${cleanText}`;
-
-    // Return from cache immediately if present
-    const cached = ttsCache.get(cacheKey);
-    if (cached) {
-      return res.json({
-        audioBase64: cached.audioBase64,
-        mimeType: cached.mimeType,
-        voiceUsed: chosenVoice,
-        text: cleanText,
-        cached: true,
-      });
-    }
-
-    let interaction: any;
-    let attempts = 0;
-    while (attempts < 2) {
-      attempts++;
-      try {
-        const apiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY! },
-          body: JSON.stringify({
-            model: env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-lite-tts',
-            input: [{ type: 'user_input', content: [{ type: 'text', text: cleanText, annotations: [{ type: 'speech_metadata', style: cleanStyle }] }] }],
-            response_format: { type: 'audio', mime_type: 'audio/l16', sample_rate: 24000 },
-            generation_config: { speech_config: [{ voice: chosenVoice }] },
-          }),
-          signal: AbortSignal.timeout(30000),
-        });
-        if (!apiResponse.ok) {
-          const detail = await apiResponse.text();
-          const apiError = new Error(`Gemini TTS request failed (${apiResponse.status}): ${detail.slice(0, 250)}`);
-          if ([429, 500, 503].includes(apiResponse.status) && attempts < 2) { await sleep(600); continue; }
-          throw apiError;
-        }
-        interaction = await apiResponse.json();
-        break;
-      } catch (genErr: any) {
-        if (attempts < 2 && /429|500|503|RESOURCE_EXHAUSTED|UNAVAILABLE/i.test(genErr?.message || '')) { await sleep(600); continue; }
-        console.warn('[TTS] Gemini TTS unavailable; browser speech fallback will be used.');
-        return res.json({ audioBase64: null, useFallback: true, rateLimited: true, error: 'Gemini narration is unavailable or its free quota is exhausted. Using device speech.' });
-      }
-    }
-
-    const audioBase64 = interaction?.output_audio?.data;
-    const mimeType = interaction?.output_audio?.mime_type || 'audio/L16;rate=24000';
-    if (audioBase64) {
-
-      // Save in LRU cache
-      if (ttsCache.size >= MAX_TTS_CACHE) {
-        const oldestKey = ttsCache.keys().next().value;
-        if (oldestKey) ttsCache.delete(oldestKey);
-      }
-      ttsCache.set(cacheKey, { audioBase64, mimeType, timestamp: Date.now() });
-
-      return res.json({
-        audioBase64,
-        mimeType,
-        voiceUsed: chosenVoice,
-        text: cleanText,
-      });
-    }
-
-    return res.json({
-      audioBase64: null,
-      useFallback: true,
-      error: 'No audio data received from Gemini TTS.',
-    });
-  } catch (err: any) {
-    console.warn('[TTS] Error in /api/tts:', err?.message || err);
-    return res.json({
-      audioBase64: null,
-      useFallback: true,
-      error: 'AI narration is unavailable. Please try again later.',
-    });
-  }
-});
+registerTtsRoutes(app, env);
 
 // 3. AI Book Categorization and Metadata Enrichment with retry & robust fallback
 app.post('/api/categorize-book', async (req, res) => {

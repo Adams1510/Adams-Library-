@@ -1,5 +1,5 @@
 name = "adams-library"
-main = "dist/worker/index.js"
+main = "dist/server/index.js"
 compatibility_date = "2026-09-26"
 
 [assets]
@@ -20,4 +20,5 @@ bucket_name = "adams-library-books"
 [vars]
 # Set GEMINI_API_KEY as a Worker secret; never commit it here.
 # GEMINI_TEXT_MODEL = "gemini-3.7-flash"
-# GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview"
+# GEMINI_TTS_MODEL = "gemini-3.8-flash-lite-tts"
+# Set GEMINI_TTS_API_KEY and/or GOOGLE_CLOUD_TTS_API_KEY as Worker secrets.

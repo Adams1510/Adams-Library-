@@ -19,6 +19,8 @@ interface VoiceSettingsModalProps {
   onClose: () => void;
   currentEngine: TtsEngine;
   currentGeminiVoice: string;
+  languageCode: string;
+  onChangeLanguageCode: (language: string) => void;
   geminiStyle: string;
   browserVoiceURI: string;
   playbackRate: number;
@@ -37,6 +39,8 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   onClose,
   currentEngine,
   currentGeminiVoice,
+  languageCode,
+  onChangeLanguageCode,
   geminiStyle,
   browserVoiceURI,
   playbackRate,
@@ -51,16 +55,32 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
 }) => {
   const [testingVoiceId, setTestingVoiceId] = useState<string | null>(null);
   const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [cloudVoices, setCloudVoices] = useState<{voiceId: string; languageCodes: string[]; gender: string}[]>([]);
+  const [configurationMessage, setConfigurationMessage] = useState('');
+  useEffect(() => {
+    if (!isOpen) return;
+    const controller = new AbortController();
+    setCloudVoices([]);
+    fetch(`/api/tts/voices?languageCode=${encodeURIComponent(languageCode)}`, {signal: controller.signal})
+      .then(response => response.json()).then(data => {
+        setCloudVoices(data.voices || []);
+        setConfigurationMessage(data.error || (!data.cloudConfigured ? 'A Google Cloud TTS key is needed to load Standard, WaveNet and Neural2 voices.' : ''));
+      }).catch(() => {if (!controller.signal.aborted) setConfigurationMessage('Google Cloud voices could not be loaded.');});
+    return () => controller.abort();
+  }, [isOpen, languageCode]);
 
   const preview = useRef<HTMLAudioElement | null>(null);
   const previewUrl = useRef<string | null>(null);
   const previewGeneration = useRef(0);
+  const devicePreview = useRef<SpeechSynthesisUtterance | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const stopPreview = () => {
     previewGeneration.current++;
     preview.current?.pause(); preview.current = null;
     if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
     previewUrl.current = null;
+    if (devicePreview.current) window.speechSynthesis.cancel();
+    devicePreview.current = null;
   };
   useEffect(() => { if (!isOpen) { stopPreview(); setTestingVoiceId(null); } return stopPreview; }, [isOpen]);
   useEffect(() => {
@@ -71,6 +91,19 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   }, [isOpen]);
   if (!isOpen) return null;
 
+  const playDevicePreview = (sampleText: string, generation: number) => {
+    if (generation !== previewGeneration.current) return;
+    if (!('speechSynthesis' in window)) {setPreviewError('Device speech is unavailable in this browser.'); setTestingVoiceId(null); return;}
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(sampleText);
+    devicePreview.current = utterance;
+    utterance.rate = playbackRate; utterance.pitch = pitch; utterance.lang = languageCode;
+    utterance.voice = browserVoices.find(v => v.voiceURI === browserVoiceURI) || browserVoices.find(v => v.lang === languageCode) || null;
+    const finish = () => {if (generation === previewGeneration.current) {devicePreview.current = null; setTestingVoiceId(null);}};
+    utterance.onend = finish; utterance.onerror = finish;
+    window.speechSynthesis.speak(utterance);
+  };
+
   const testVoiceSample = async (voice: typeof AVAILABLE_VOICES[0]) => {
     stopPreview();
     speechEngine.pause();
@@ -80,19 +113,22 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
     const sampleText = 'Verily, with every hardship comes ease and profound stillness of the heart.';
 
     try {
-      if (voice.engine === 'gemini') {
+      if (voice.engine !== 'browser') {
         const res = await fetch('/api/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               text: sampleText,
-              voiceName: voice.geminiVoiceName,
+              voiceId: voice.geminiVoiceName,
+              provider: voice.engine,
+              languageCode,
               style: geminiStyle,
             rate: playbackRate,
           }),
-        });
+          signal: AbortSignal.timeout(35000),
+        }).catch(() => null);
 
-        if (res.ok) {
+        if (res?.ok) {
           const data = await res.json();
           if (data.audioBase64) {
             if (generation !== previewGeneration.current) return;
@@ -101,30 +137,20 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
             preview.current = audio;
             audio.playbackRate = playbackRate;
             await audio.play();
-            audio.onended = () => setTestingVoiceId(null);
-            audio.onerror = () => setTestingVoiceId(null);
+            audio.onended = () => {if (generation === previewGeneration.current) setTestingVoiceId(null);};
+            audio.onerror = () => {setPreviewError('Google audio could not be played. Using the device voice.'); playDevicePreview(sampleText, generation);};
             return;
           }
         }
       }
 
       if (generation !== previewGeneration.current) return;
-      if (voice.engine === 'gemini') setPreviewError('AI voice is unavailable. This preview uses your device voice.');
-      // Browser fallback speech
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(sampleText);
-        utterance.rate = playbackRate;
-        utterance.pitch = pitch;
-        utterance.onend = () => setTestingVoiceId(null);
-        utterance.onerror = () => setTestingVoiceId(null);
-        window.speechSynthesis.speak(utterance);
-      } else {
-        setTestingVoiceId(null);
-      }
+      if (voice.engine !== 'browser') setPreviewError('Google voice is unavailable. This preview uses your device voice.');
+      playDevicePreview(sampleText, generation);
     } catch (e) {
-      setPreviewError('Unable to play this voice. Please try again.');
-      setTestingVoiceId(null);
+      if (generation !== previewGeneration.current) return;
+      setPreviewError('Google voice could not be played. Using the device voice.');
+      playDevicePreview(sampleText, generation);
     }
   };
 
@@ -144,7 +170,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
                 Voice & Speech Engine
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Choose Gemini AI Studio models or Device Native TTS
+                Google narration with automatic device speech fallback
               </p>
             </div>
           </div>
@@ -166,7 +192,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
               Available Narrator Voices
             </label>
             <div className="space-y-2.5">
-              {AVAILABLE_VOICES.map((v) => {
+              {AVAILABLE_VOICES.filter(v => v.engine !== 'browser').map((v) => {
                 const isSelected =
                   v.engine === currentEngine &&
                   (v.engine === 'browser' || v.geminiVoiceName === currentGeminiVoice);
@@ -234,7 +260,29 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
           </div>
 
           <div className="space-y-2 border-t border-slate-200 dark:border-slate-800 pt-4">
-            <label htmlFor="device-voice" className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Free device voice</label>
+            <label htmlFor="narration-language" className="block text-xs font-bold text-slate-500 dark:text-slate-400">Narration language</label>
+            <select id="narration-language" value={languageCode} onChange={event => {
+              onChangeLanguageCode(event.target.value);
+              if (currentEngine === 'google-cloud') onSelectEngineAndVoice('gemini', 'Kore');
+            }} className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm">
+              <option value="en-US">English (US)</option><option value="en-GB">English (UK)</option>
+              <option value="ar-XA">Arabic</option><option value="th-TH">Thai</option>
+              <option value="fr-FR">French</option><option value="es-ES">Spanish</option>
+              <option value="de-DE">German</option><option value="hi-IN">Hindi</option>
+            </select>
+            <label htmlFor="cloud-voice" className="block text-xs font-bold text-slate-500 dark:text-slate-400">Google Cloud narrator</label>
+            <select id="cloud-voice" value={currentEngine === 'google-cloud' ? currentGeminiVoice : ''} disabled={!cloudVoices.length}
+              onChange={event => {if (event.target.value) onSelectEngineAndVoice('google-cloud', event.target.value);}}
+              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm">
+              <option value="">Select an official Google Cloud voice</option>
+              {cloudVoices.map(v => <option key={v.voiceId} value={v.voiceId}>{v.voiceId} ({v.gender.toLowerCase()})</option>)}
+            </select>
+            {currentEngine === 'google-cloud' && <button type="button" onClick={() => testVoiceSample({id: 'cloud-preview', name: currentGeminiVoice, engine: 'google-cloud', geminiVoiceName: currentGeminiVoice, gender: 'Neutral', description: ''})} className="text-sm font-semibold text-emerald-600">Preview Google Cloud voice</button>}
+            {configurationMessage && <p className="text-xs text-amber-600">{configurationMessage}</p>}
+          </div>
+
+          <div className="space-y-2 border-t border-slate-200 dark:border-slate-800 pt-4">
+            <label htmlFor="device-voice" className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Device fallback voice</label>
             <select id="device-voice" value={browserVoiceURI} onChange={(event) => onSelectBrowserVoice(event.target.value)}
               className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100">
               <option value="">Use device default voice</option>
@@ -266,7 +314,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
             <label htmlFor="custom-gemini-voice" className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider pt-2">
               Custom Gemini voice ID (optional)
             </label>
-            <input id="custom-gemini-voice" value={currentGeminiVoice} maxLength={100}
+            <input id="custom-gemini-voice" value={currentEngine === 'gemini' ? currentGeminiVoice : 'Kore'} maxLength={100}
               onChange={(event) => onSelectEngineAndVoice('gemini', event.target.value.trim() || 'Kore')}
               placeholder="Choose a voice above or paste a voice_… ID"
               className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100" />

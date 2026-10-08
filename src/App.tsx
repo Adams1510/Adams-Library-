@@ -93,8 +93,18 @@ export default function App() {
   // --- Speech & Audio Settings ---
   const [playbackRate, setPlaybackRate] = useState<number>(1.0);
   const [pitch, setPitch] = useState<number>(1.0);
-  const [ttsEngine, setTtsEngine] = useState<TtsEngine>('browser');
+  const [ttsEngine, setTtsEngine] = useState<TtsEngine>('gemini');
   const [geminiVoiceName, setGeminiVoiceName] = useState<string>('Kore');
+  const [languageCode, setLanguageCode] = useState<string>('en-US');
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/tts/voices?languageCode=en-US', {signal: controller.signal}).then(response => response.json()).then(data => {
+      if (!data.geminiConfigured && data.cloudConfigured && data.voices?.length) {
+        setTtsEngine('google-cloud'); setGeminiVoiceName(data.voices[0].voiceId);
+      }
+    }).catch(() => {});
+    return () => controller.abort();
+  }, []);
   const [geminiStyle, setGeminiStyle] = useState<string>(() => localStorage.getItem('adams-gemini-style') || 'Warm, clear audiobook narration');
   const [browserVoiceURI, setBrowserVoiceURI] = useState<string>(() => localStorage.getItem('adams-browser-voice') || '');
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
@@ -197,11 +207,12 @@ export default function App() {
 
     speechEngine.setEngine(ttsEngine, geminiVoiceName);
     speechEngine.setGeminiStyle(geminiStyle);
+    speechEngine.setLanguageCode(languageCode);
     const availableVoice = speechEngine.getAvailableBrowserVoices().find((voice) => voice.voiceURI === browserVoiceURI) || null;
     speechEngine.setBrowserVoice(availableVoice);
     speechEngine.setPlaybackRate(playbackRate);
     speechEngine.setPitch(pitch);
-  }, [activeBookId, activeChapterIndex, ttsEngine, geminiVoiceName, geminiStyle, browserVoiceURI, playbackRate, pitch, handleChapterComplete]);
+  }, [activeBookId, activeChapterIndex, ttsEngine, geminiVoiceName, geminiStyle, languageCode, browserVoiceURI, playbackRate, pitch, handleChapterComplete]);
 
   // Sleep Timer Countdown Interval
   useEffect(() => {
@@ -600,6 +611,8 @@ export default function App() {
         onClose={() => setIsVoiceSettingsOpen(false)}
         currentEngine={ttsEngine}
         currentGeminiVoice={geminiVoiceName}
+        languageCode={languageCode}
+        onChangeLanguageCode={setLanguageCode}
         geminiStyle={geminiStyle}
         browserVoiceURI={browserVoiceURI}
         playbackRate={playbackRate}

@@ -19,9 +19,10 @@ export class AudiobookSpeechEngine {
   private isPlaying = false;
   private playbackRate = 1;
   private pitch = 1;
-  private engine: TtsEngine = 'browser';
+  private engine: TtsEngine = 'gemini';
   private geminiVoiceName = 'Kore';
   private geminiStyle = 'Warm, clear audiobook narration';
+  private languageCode = 'en-US';
   private selectedBrowserVoice: SpeechSynthesisVoice | null = null;
   private callbacks: SpeechCallbacks = {};
   private progressInterval: ReturnType<typeof setInterval> | null = null;
@@ -49,6 +50,11 @@ export class AudiobookSpeechEngine {
     this.geminiStyle = next;
     this.cache.clear(); this.cacheBytes = 0;
     if (this.isPlaying && this.engine === 'gemini') void this.speak();
+  }
+  setLanguageCode(languageCode: string) {
+    if (this.languageCode === languageCode) return;
+    this.languageCode = languageCode; this.geminiCooldownUntil = 0;
+    if (this.isPlaying) void this.speak();
   }
   setPlaybackRate(rate: number) {
     const next = Math.max(0.5, Math.min(2.5, rate));
@@ -133,9 +139,9 @@ export class AudiobookSpeechEngine {
     const version = this.generation, text = this.paragraphs[this.currentParagraphIndex];
     if (!text?.trim()) { this.next(); return; }
     this.paragraphSeconds = 0; this.callbacks.onParagraphChange?.(this.currentParagraphIndex);
-    if (this.engine === 'gemini' && !this.isGeminiCooldownActive()) {
+    if (this.engine !== 'browser' && !this.isGeminiCooldownActive()) {
       try {
-        const key = `${this.geminiVoiceName}:${this.geminiStyle}:${text}`;
+        const key = `${this.engine}:${this.geminiVoiceName}:${this.languageCode}:${this.geminiStyle}:${text}`;
         let blob = this.cache.get(key);
         if (!blob) {
           const controller = new AbortController(); this.request = controller;
@@ -143,7 +149,7 @@ export class AudiobookSpeechEngine {
           let data: any;
           try {
             const res = await fetch('/api/tts', {method: 'POST', headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({text, voiceName: this.geminiVoiceName, style: this.geminiStyle}), signal: controller.signal});
+              body: JSON.stringify({text, voiceId: this.geminiVoiceName, provider: this.engine, languageCode: this.languageCode, style: this.geminiStyle}), signal: controller.signal});
             data = await res.json();
             if (!res.ok || !data.audioBase64) throw new Error(data.message || data.error || 'AI voice is unavailable.');
           } finally { clearTimeout(timeout); if (this.request === controller) this.request = null; }
@@ -159,7 +165,12 @@ export class AudiobookSpeechEngine {
         this.audioUrl = URL.createObjectURL(blob);
         const audio = new Audio(this.audioUrl); this.audio = audio; audio.playbackRate = this.playbackRate;
         audio.onended = () => { if (version === this.generation && this.isPlaying) this.next(); };
-        audio.onerror = () => { if (version === this.generation) this.fail('The AI audio could not be played. Try the device voice.'); };
+        audio.onerror = () => {
+          if (version !== this.generation || !this.isPlaying) return;
+          this.geminiCooldownUntil = Date.now() + 60000;
+          this.callbacks.onEngineFallback?.('Google audio could not be played. Using device speech.');
+          void this.speak();
+        };
         await audio.play(); return;
       } catch (error) {
         if (version !== this.generation || !this.isPlaying) return;
@@ -170,7 +181,8 @@ export class AudiobookSpeechEngine {
     if (!('speechSynthesis' in window)) { this.fail('This browser does not support device narration.'); return; }
     const utterance = new SpeechSynthesisUtterance(text); this.utterance = utterance;
     utterance.rate = this.playbackRate; utterance.pitch = this.pitch;
-    const voices = this.getAvailableBrowserVoices(), voice = this.selectedBrowserVoice || voices.find(v => v.default) || voices[0];
+    utterance.lang = this.languageCode;
+    const voices = this.getAvailableBrowserVoices(), voice = this.selectedBrowserVoice || voices.find(v => v.lang === this.languageCode) || voices.find(v => v.default) || voices[0];
     if (voice) utterance.voice = voice;
     utterance.onend = () => { if (version === this.generation && this.isPlaying) this.next(); };
     utterance.onerror = event => {

@@ -1,4 +1,4 @@
-import { Book, VoiceOption } from '../types';
+import type { Book, VoiceOption } from '../types.ts';
 
 /**
  * Clean initial state: Zero placeholder books by default as requested.

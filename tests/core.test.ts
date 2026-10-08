@@ -35,6 +35,7 @@ test('pause/resume retains the utterance; stale callbacks cannot advance another
   (globalThis as any).window = {speechSynthesis: synth};
   (globalThis as any).SpeechSynthesisUtterance = class {constructor(public text: string) {}};
   const engine = new AudiobookSpeechEngine();
+  engine.setEngine('browser');
   engine.loadChapter(['first paragraph', 'second paragraph']);
   await engine.play();
   const staleEnd = utterances[0].onend;
@@ -57,4 +58,23 @@ test('late AI response after stop or pause never starts playback or fallback', a
   complete({ok: true, json: async () => ({useFallback: true})}); await playing;
   assert.equal(engine.getCurrentState().isPlaying, false); assert.equal(fallback, 0);
   engine.stop(); globalThis.fetch = previousFetch;
+});
+
+test('Google audio is primary; only a failed backend request uses device speech with the chosen language', async () => {
+  const previousFetch = globalThis.fetch;
+  const previousAudio = (globalThis as any).Audio;
+  let audioPlays = 0; const utterances: any[] = []; const requests: any[] = [];
+  (globalThis as any).window = {speechSynthesis: {getVoices: () => [], cancel() {}, speak(value: any) {utterances.push(value);}}};
+  (globalThis as any).Audio = class {playbackRate = 1; currentTime = 0; constructor(public src: string) {} async play() {audioPlays++;} pause() {} removeAttribute() {}};
+  try {
+    globalThis.fetch = (async (_url: any, init: any) => {requests.push(JSON.parse(init.body)); return Response.json({audioBase64: 'YWJj', mimeType: 'audio/mpeg'});}) as any;
+    const engine = new AudiobookSpeechEngine();
+    engine.setEngine('google-cloud', 'en-GB-Neural2-A'); engine.setLanguageCode('en-GB');
+    engine.loadChapter(['Successful Google audio']); await engine.play(); engine.stop();
+    assert.equal(audioPlays, 1); assert.equal(utterances.length, 0);
+    assert.equal(requests[0].provider, 'google-cloud'); assert.equal(requests[0].voiceId, 'en-GB-Neural2-A'); assert.equal(requests[0].languageCode, 'en-GB');
+    globalThis.fetch = (async () => Response.json({useFallback: true, message: 'No server key'})) as any;
+    engine.loadChapter(['Fallback paragraph']); await engine.play();
+    assert.equal(utterances.length, 1); assert.equal(utterances[0].lang, 'en-GB'); engine.stop();
+  } finally {globalThis.fetch = previousFetch; (globalThis as any).Audio = previousAudio;}
 });
