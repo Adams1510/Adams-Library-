@@ -1,6 +1,6 @@
 import type { TtsEngine } from '../types.ts';
 import { audioBlob } from '../utils/audio.ts';
-import {narrationText, wordAtCharacter, estimatedWord, validTimepoints, type Word, type WordTimepoint} from '../utils/narrationText.ts';
+import {narrationText, bilingualRuns, wordAtCharacter, estimatedWord, validTimepoints, type Word, type WordTimepoint} from '../utils/narrationText.ts';
 
 export type WordPosition = {paragraphIndex: number; wordIndex: number; sentenceIndex: number; word: string; timing: 'boundary' | 'timestamp' | 'estimated' | 'idle'};
 
@@ -28,6 +28,10 @@ export class AudiobookSpeechEngine {
   private geminiStyle = 'Warm, clear audiobook narration';
   private languageCode = 'en-US';
   private selectedBrowserVoice: SpeechSynthesisVoice | null = null;
+  private arabicVoiceURI = '';
+  private bilingual = true;
+  private runEndCharacter = Infinity;
+  private runStartCharacter = 0;
   private callbacks: SpeechCallbacks = {};
   private progressInterval: ReturnType<typeof setInterval> | null = null;
   private offsets: number[] = [];
@@ -119,6 +123,8 @@ export class AudiobookSpeechEngine {
   }
   setPitch(pitch: number) { this.pitch = Math.max(0.5, Math.min(1.5, pitch)); }
   setBrowserVoice(voice: SpeechSynthesisVoice | null) { this.selectedBrowserVoice = voice; }
+  setArabicVoiceURI(uri: string) {this.arabicVoiceURI = uri;}
+  setBilingual(enabled: boolean) {this.bilingual = enabled;}
   isGeminiCooldownActive() { return this.geminiCooldownUntil > Date.now(); }
   loadChapter(paragraphs: string[], start = 0, _wordCount = 0) {
     this.stop(); this.paragraphs = paragraphs;
@@ -204,7 +210,7 @@ export class AudiobookSpeechEngine {
         this.paragraphSeconds = this.audio.currentTime; this.updateAudioWord();
       } else if (this.utterance) {
         this.paragraphSeconds += delta * this.playbackRate;
-        if (!this.hasWordBoundaries) this.notifyWord(estimatedWord(this.words, this.paragraphSeconds / this.durations[this.currentParagraphIndex]), 'estimated');
+        if (!this.hasWordBoundaries) this.notifyWord(Math.max(wordAtCharacter(this.words, this.runStartCharacter), Math.min(wordAtCharacter(this.words, this.runEndCharacter - 1), estimatedWord(this.words, this.paragraphSeconds / this.durations[this.currentParagraphIndex]))), 'estimated');
       }
       this.notifyProgress();
     }, 80);
@@ -223,7 +229,11 @@ export class AudiobookSpeechEngine {
     this.words = narrationText(text).words; this.points = []; this.hasWordBoundaries = false;
     const seekSeconds = this.pendingSeconds; this.pendingSeconds = 0;
     this.paragraphSeconds = seekSeconds; this.notifyWord(-1, 'idle'); this.callbacks.onParagraphChange?.(this.currentParagraphIndex);
-    if (this.engine !== 'browser' && !this.isGeminiCooldownActive()) {
+    const languageRuns = bilingualRuns(text);
+    const hasArabic = languageRuns.some(r => r.language === 'ar');
+    // Mixed passages need two device voices; the deferred cloud setup has one selected voice.
+    const deviceBilingual = this.bilingual && hasArabic && (languageRuns.some(r => r.language === 'en') || !this.languageCode.startsWith('ar'));
+    if (this.engine !== 'browser' && !deviceBilingual && !this.isGeminiCooldownActive()) {
       try {
         const key = `${this.engine}:${this.geminiVoiceName}:${this.languageCode}:${this.geminiStyle}:${text}`;
         let clip = this.cache.get(key);
@@ -281,10 +291,35 @@ export class AudiobookSpeechEngine {
     const initialWord = estimatedWord(this.words, seekSeconds / this.durations[this.currentParagraphIndex]);
     this.startCharacter = this.pendingCharacter ?? (seekSeconds > 0 ? this.words[initialWord]?.start || 0 : 0);
     this.pendingCharacter = null;
-    const utterance = new SpeechSynthesisUtterance(text.slice(this.startCharacter)); this.utterance = utterance;
-    const speechStart = this.startCharacter;
+    const startCharacter = this.startCharacter;
+    const runs = this.bilingual ? bilingualRuns(text.slice(startCharacter)) : [{text: text.slice(startCharacter), start: 0, language: this.languageCode.startsWith('ar') ? 'ar' as const : 'en' as const}];
+    let voices = this.getAvailableBrowserVoices();
+    if (runs.some(r => r.language === 'ar') && !voices.some(v => /^ar(?:-|$)/i.test(v.lang))) {
+      const synth = window.speechSynthesis;
+      if (typeof synth.addEventListener === 'function') await new Promise<void>(resolve => {
+        const ready = () => {clearTimeout(timeout); synth.removeEventListener('voiceschanged', ready); resolve();};
+        const timeout = setTimeout(ready, 1500); synth.addEventListener('voiceschanged', ready, {once:true});
+      });
+      if (version !== this.generation || !this.isPlaying) return;
+      voices = this.getAvailableBrowserVoices();
+      if (!voices.some(v => /^ar(?:-|$)/i.test(v.lang))) {this.pendingSeconds = seekSeconds; this.pendingCharacter = startCharacter; this.fail('An Arabic device voice is needed to read this passage. Enable an Arabic voice on your device, then press Listen.'); return;}
+    }
+    if (this.bilingual && hasArabic && runs.some(r => r.language === 'en') && !voices.some(v => /^en(?:-|$)/i.test(v.lang))) {
+      this.pendingSeconds = seekSeconds; this.pendingCharacter = startCharacter;
+      this.fail('An English device voice is needed alongside Arabic. Enable an English voice on your device, then press Listen.'); return;
+    }
+    const speakRun = (index: number) => {
+    if (version !== this.generation || !this.isPlaying) return;
+    const run = runs[index];
+    if (!run) {this.next(); return;}
+    const speechStart = startCharacter + run.start;
+    this.runStartCharacter = speechStart;
+    this.runEndCharacter = speechStart + run.text.length;
+    this.hasWordBoundaries = false; this.outputStarted = false;
+    const utterance = new SpeechSynthesisUtterance(run.text); this.utterance = utterance;
     utterance.onstart = () => {
       if (version !== this.generation || !this.isPlaying) return;
+      this.paragraphSeconds = speechStart / text.length * this.durations[this.currentParagraphIndex];
       this.outputStarted = true; this.lastTick = performance.now(); this.notifyWord(wordAtCharacter(this.words, speechStart), 'estimated');
     };
     utterance.onboundary = event => {
@@ -295,14 +330,19 @@ export class AudiobookSpeechEngine {
       this.notifyWord(wordAtCharacter(this.words, character), 'boundary'); this.notifyProgress();
     };
     utterance.rate = this.playbackRate; utterance.pitch = this.pitch;
-    utterance.lang = this.languageCode;
-    const voices = this.getAvailableBrowserVoices(), voice = this.selectedBrowserVoice || voices.find(v => v.lang === this.languageCode) || voices.find(v => v.default) || voices[0];
+    const language = this.bilingual && run.language === 'ar' ? 'ar-SA' : this.bilingual && (hasArabic || this.languageCode.startsWith('ar')) ? 'en-US' : this.languageCode;
+    const base = language.split('-')[0];
+    const preferred = base === 'ar' ? voices.find(v => v.voiceURI === this.arabicVoiceURI && /^ar(?:-|$)/i.test(v.lang)) : this.selectedBrowserVoice?.lang.split('-')[0] === base ? this.selectedBrowserVoice : null;
+    const voice = preferred || voices.find(v => v.lang === language) || voices.find(v => v.lang.split('-')[0] === base) || (base !== 'ar' ? voices.find(v => v.default) || voices[0] : null);
+    utterance.lang = voice?.lang || language;
     if (voice) utterance.voice = voice;
-    utterance.onend = () => { if (version === this.generation && this.isPlaying) this.next(); };
+    utterance.onend = () => {if (version === this.generation && this.isPlaying) speakRun(index + 1);};
     utterance.onerror = event => {
       if (version === this.generation && !['canceled', 'interrupted'].includes(event.error)) this.fail('Device narration failed. Try another voice or press Listen again.');
     };
     window.speechSynthesis.speak(utterance);
+    };
+    speakRun(0);
   }
   private next() {
     if (this.currentParagraphIndex + 1 < this.paragraphs.length) { this.currentParagraphIndex++; this.pendingSeconds = 0; this.pendingCharacter = null; void this.speak(); }

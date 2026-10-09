@@ -23,6 +23,10 @@ interface VoiceSettingsModalProps {
   onChangeLanguageCode: (language: string) => void;
   geminiStyle: string;
   browserVoiceURI: string;
+  arabicVoiceURI: string;
+  bilingual: boolean;
+  onChangeArabicVoice: (uri: string) => void;
+  onChangeBilingual: (enabled: boolean) => void;
   playbackRate: number;
   pitch: number;
   autoScroll: boolean;
@@ -43,6 +47,10 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   onChangeLanguageCode,
   geminiStyle,
   browserVoiceURI,
+  arabicVoiceURI,
+  bilingual,
+  onChangeArabicVoice,
+  onChangeBilingual,
   playbackRate,
   pitch,
   autoScroll,
@@ -282,13 +290,26 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
           </div>
 
           <div className="space-y-2 border-t border-slate-200 dark:border-slate-800 pt-4">
-            <label htmlFor="device-voice" className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Device fallback voice</label>
+            <label className="flex items-start gap-3 text-sm font-semibold text-slate-800 dark:text-slate-100">
+              <input type="checkbox" checked={bilingual} onChange={e => onChangeBilingual(e.target.checked)} className="mt-1 accent-emerald-600"/>
+              Automatically read Arabic and English in their original languages
+            </label>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Mixed passages use separate device voices, in the book’s order. Nothing is translated.</p>
+            <label htmlFor="device-voice" className="block text-sm font-bold text-slate-500 dark:text-slate-400">{bilingual ? 'English device voice' : 'Device fallback voice'}</label>
             <select id="device-voice" value={browserVoiceURI} onChange={(event) => onSelectBrowserVoice(event.target.value)}
               className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100">
               <option value="">Use device default voice</option>
-              {browserVoices.map((voice) => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name} ({voice.lang}){voice.default ? ' • default' : ''}</option>)}
+              {browserVoices.filter(v => !bilingual || /^en(?:-|$)/i.test(v.lang)).map((voice) => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name} ({voice.lang}){voice.default ? ' • default' : ''}</option>)}
             </select>
             <p className="text-[11px] text-slate-500 dark:text-slate-400">These voices come from your browser or operating system. The available list varies by device.</p>
+            {bilingual && <>
+              <label htmlFor="arabic-device-voice" className="block text-sm font-bold text-slate-500 dark:text-slate-400">Arabic device voice</label>
+              <select id="arabic-device-voice" value={arabicVoiceURI} onChange={e => onChangeArabicVoice(e.target.value)} className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100">
+                <option value="">Automatically choose an Arabic voice</option>
+                {browserVoices.filter(v => /^ar(?:-|$)/i.test(v.lang)).map(v => <option key={v.voiceURI} value={v.voiceURI}>{v.name} ({v.lang})</option>)}
+              </select>
+              {!browserVoices.some(v => /^ar(?:-|$)/i.test(v.lang)) && <p className="text-sm text-amber-600 dark:text-amber-300">No Arabic voice is available on this device yet. Enable an Arabic voice in your device’s speech settings. Narration will pause rather than read Arabic with an English voice.</p>}
+            </>}
           </div>
 
           <div className="space-y-2 border-t border-slate-200 dark:border-slate-800 pt-4">

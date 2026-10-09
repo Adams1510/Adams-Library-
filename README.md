@@ -6,6 +6,8 @@ The reader highlights words from device speech `boundary` events or complete Goo
 
 The player shows a bounded history of spoken fragments flowing downward. Web Audio frequency data drives the spectrum for media audio; device narration uses word-event rhythm because Web Speech audio is not exposed to the analyser. Pause stops motion, seeking updates the selected word, and speed changes preserve the active passage. **Follow** centers the current sentence above the player; manual scrolling disables it. Reduced-motion preferences disable kinetic motion. Chapter duration remains approximate until individual audio clips are measured.
 
+Automatic Arabic/English narration is enabled by default. Mixed passages use device voices for consecutive script runs, preserving all text and original order without translation. Voice settings provide separate English and Arabic device choices and an automatic switching toggle. Arabic uses an available `ar-*` voice; if none is available after voice loading, narration stops with an installation message instead of assigning an English voice. Devices must provide Arabic speech support. Single-language cloud narration remains available with its selected language; mixed cloud voice selection is deferred. EPUB import still extracts readable text, not embedded images or broken PDF font encodings.
+
 ## Run locally
 
 Use Node.js 24 or newer.

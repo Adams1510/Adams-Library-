@@ -1,6 +1,18 @@
 export type Word = {text: string; start: number; end: number; sentenceIndex: number};
 export type Sentence = {text: string; start: number; end: number};
 export type WordTimepoint = {wordIndex: number; timeSeconds: number};
+export type LanguageRun = {text: string; start: number; language: 'ar' | 'en'};
+export function bilingualRuns(text: string): LanguageRun[] {
+  const runs: LanguageRun[] = []; let start = 0, language: 'ar' | 'en' | null = null;
+  for (const word of narrationText(text).words) {
+    const detected = /\p{Script=Arabic}/u.test(word.text) ? 'ar' : /\p{Script=Latin}/u.test(word.text) ? 'en' : null;
+    if (!detected) continue;
+    if (language && detected !== language) {runs.push({text: text.slice(start, word.start), start, language}); start = word.start;}
+    language = detected;
+  }
+  if (start < text.length) runs.push({text: text.slice(start), start, language: language || 'en'});
+  return runs;
+}
 const sentenceSegmenter = new Intl.Segmenter('en', {granularity: 'sentence'});
 const wordSegmenter = new Intl.Segmenter('en', {granularity: 'word'});
 

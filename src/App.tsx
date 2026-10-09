@@ -108,6 +108,8 @@ export default function App() {
   }, []);
   const [geminiStyle, setGeminiStyle] = useState<string>(() => localStorage.getItem('adams-gemini-style') || 'Warm, clear audiobook narration');
   const [browserVoiceURI, setBrowserVoiceURI] = useState<string>(() => localStorage.getItem('adams-browser-voice') || '');
+  const [arabicVoiceURI, setArabicVoiceURI] = useState(() => localStorage.getItem('adams-arabic-voice') || '');
+  const [bilingual, setBilingual] = useState(() => localStorage.getItem('adams-bilingual') !== 'false');
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const [ambientSoundType, setAmbientSoundType] = useState<'none' | 'rain' | 'library' | 'stream' | 'waves'>('none');
   const [ambientVolume, setAmbientVolume] = useState<number>(0.3);
@@ -212,9 +214,11 @@ export default function App() {
     speechEngine.setLanguageCode(languageCode);
     const availableVoice = speechEngine.getAvailableBrowserVoices().find((voice) => voice.voiceURI === browserVoiceURI) || null;
     speechEngine.setBrowserVoice(availableVoice);
+    speechEngine.setArabicVoiceURI(arabicVoiceURI);
+    speechEngine.setBilingual(bilingual);
     speechEngine.setPlaybackRate(playbackRate);
     speechEngine.setPitch(pitch);
-  }, [activeBookId, activeChapterIndex, ttsEngine, geminiVoiceName, geminiStyle, languageCode, browserVoiceURI, playbackRate, pitch, handleChapterComplete]);
+  }, [activeBookId, activeChapterIndex, ttsEngine, geminiVoiceName, geminiStyle, languageCode, browserVoiceURI, arabicVoiceURI, bilingual, playbackRate, pitch, handleChapterComplete]);
 
   // Sleep Timer Countdown Interval
   useEffect(() => {
@@ -620,6 +624,10 @@ export default function App() {
         onChangeLanguageCode={setLanguageCode}
         geminiStyle={geminiStyle}
         browserVoiceURI={browserVoiceURI}
+        arabicVoiceURI={arabicVoiceURI}
+        bilingual={bilingual}
+        onChangeArabicVoice={uri => {setArabicVoiceURI(uri); localStorage.setItem('adams-arabic-voice', uri); speechEngine.setArabicVoiceURI(uri);}}
+        onChangeBilingual={enabled => {setBilingual(enabled); localStorage.setItem('adams-bilingual', String(enabled)); speechEngine.setBilingual(enabled);}}
         playbackRate={playbackRate}
         pitch={pitch}
         autoScroll={autoScroll}

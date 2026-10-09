@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {pcmToWav, audioBlob} from '../src/utils/audio.ts';
 import {splitIntoParagraphs, resolveEpubPath} from '../src/utils/epubParser.ts';
 import {AudiobookSpeechEngine} from '../src/services/speechEngine.ts';
-import {narrationText, markedSsml, validTimepoints} from '../src/utils/narrationText.ts';
+import {narrationText, bilingualRuns, markedSsml, validTimepoints} from '../src/utils/narrationText.ts';
 
 test('long prose and unspaced text are chunked without truncation', () => {
   const text = Array.from({length: 2200}, (_, i) => `word${i}`).join(' ');
@@ -117,4 +117,30 @@ test('timestamp alignment follows media time and a seek within audio preserves t
   const engine=new AudiobookSpeechEngine();engine.setCallbacks({onWordChange:p=>positions.push(p)});
   try{engine.loadChapter(['one two three']);await engine.play();engine.seekToFraction(.5);assert.equal(audios.length,1);assert.equal(audios[0].currentTime,1.5);assert.equal(positions.at(-1).word,'two');assert.equal(positions.at(-1).timing,'timestamp');engine.pause();assert.equal(engine.getVisualization().energy,0);}
   finally{engine.stop();globalThis.fetch=previousFetch;(globalThis as any).Audio=previousAudio;}
+});
+
+test('mixed Arabic and English switch device voices without translating or losing offsets', async () => {
+  const text='English first. السَّلَامُ عَلَيْكُمْ، then English again.';
+  const runs=bilingualRuns(text);assert.deepEqual(runs.map(r=>r.language),['en','ar','en']);assert.equal(runs.map(r=>r.text).join(''),text);
+  const voices=[{voiceURI:'english',lang:'en-US',default:true},{voiceURI:'arabic',lang:'ar-EG'}] as any;
+  const utterances:any[]=[],positions:any[]=[];
+  (globalThis as any).window={speechSynthesis:{paused:false,getVoices:()=>voices,speak(u:any){utterances.push(u);},cancel(){},pause(){this.paused=true;},resume(){this.paused=false;}}};
+  (globalThis as any).SpeechSynthesisUtterance=class{constructor(public text:string){}};
+  const engine=new AudiobookSpeechEngine();engine.setEngine('browser');engine.setBrowserVoice(voices[0]);engine.setArabicVoiceURI('arabic');engine.setCallbacks({onWordChange:p=>positions.push(p)});
+  engine.loadChapter([text]);await engine.play();
+  assert.equal(utterances[0].voice.voiceURI,'english');utterances[0].onend();
+  assert.equal(utterances[1].voice.voiceURI,'arabic');assert.equal(utterances[1].lang,'ar-EG');
+  utterances[1].onstart();utterances[1].onboundary({name:'word',charIndex:0});
+  assert.equal(positions.at(-1).word,narrationText(text).words.find(w=>/\p{Script=Arabic}/u.test(w.text))!.text);
+  const end=utterances[1].onend;engine.pause();end();assert.equal(utterances.length,2);engine.resume();end();
+  assert.equal(utterances[2].voice.voiceURI,'english');assert.equal(utterances.map(u=>u.text).join(''),text);
+  engine.loadChapter(['Another chapter']);end();assert.equal(utterances.length,3);engine.stop();
+});
+
+test('missing Arabic voices stop with a useful message rather than choosing an English voice', async () => {
+  let message='',spoken=0;
+  (globalThis as any).window={speechSynthesis:{getVoices:()=>[{voiceURI:'english',lang:'en-US'}],speak(){spoken++;},cancel(){}}};
+  const engine=new AudiobookSpeechEngine();engine.setEngine('browser');engine.setCallbacks({onError:m=>message=m});
+  engine.loadChapter(['English and العربية']);await engine.play();
+  assert.equal(spoken,0);assert.match(message,/Arabic device voice/);assert.equal(engine.getCurrentState().isPlaying,false);engine.stop();
 });
