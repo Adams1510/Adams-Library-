@@ -87,7 +87,7 @@ export function AudioPlayerBar(p: AudioPlayerBarProps) {
   return <section ref={dock} id="narration-dock" className="narration-dock" aria-label="Narration player">
     <div className="narration-dock-inner">
       <div className="narration-title-row">
-        <div className="min-w-0"><p className="narration-book-name">{book.title}</p><p className="narration-chapter-name">{currentChapter.title}</p></div>
+        <div className="min-w-0"><p className="narration-book-name">{book.title}</p><p className="narration-chapter-name">{currentChapter.title}{speechEngine.getCurrentState().engine === 'elevenlabs' ? ' · elevenlabs.io' : ''}</p></div>
         <span className="sync-status" title="Exact highlighting needs device word events or audio timestamps. Other voices use estimated timing.">{timingLabel}</span>
       </div>
       <div className="waterfall-stage" aria-hidden="true" data-playing={isPlaying}>
