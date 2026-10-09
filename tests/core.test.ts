@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {pcmToWav, audioBlob} from '../src/utils/audio.ts';
 import {splitIntoParagraphs, resolveEpubPath} from '../src/utils/epubParser.ts';
 import {AudiobookSpeechEngine} from '../src/services/speechEngine.ts';
+import {narrationText, markedSsml, validTimepoints} from '../src/utils/narrationText.ts';
 
 test('long prose and unspaced text are chunked without truncation', () => {
   const text = Array.from({length: 2200}, (_, i) => `word${i}`).join(' ');
@@ -77,4 +78,43 @@ test('Google audio is primary; only a failed backend request uses device speech 
     engine.loadChapter(['Fallback paragraph']); await engine.play();
     assert.equal(utterances.length, 1); assert.equal(utterances[0].lang, 'en-GB'); engine.stop();
   } finally {globalThis.fetch = previousFetch; (globalThis as any).Audio = previousAudio;}
+});
+
+test('word tracking preserves punctuation and Unicode offsets and escapes SSML input', () => {
+  const text = 'Hello, café! Next: أحمد & <reader>.';
+  const {words,sentences}=narrationText(text);
+  for(const word of words)assert.equal(text.slice(word.start,word.end),word.text);
+  assert.equal(words[2].sentenceIndex,1);
+  assert.equal(sentences.map(s=>s.text).join(''),text);
+  const ssml=markedSsml(text); assert.ok(ssml.includes('&amp;')); assert.ok(ssml.includes('&lt;')); assert.ok(!ssml.includes('<reader>'));
+  assert.deepEqual(validTimepoints([{wordIndex:0,timeSeconds:0}],2),[]);
+  assert.deepEqual(validTimepoints([{wordIndex:0,timeSeconds:2},{wordIndex:1,timeSeconds:1}],2),[]);
+});
+
+test('device word boundaries highlight exactly, ignore paused/stale events, and retain the word when speed changes', async () => {
+  const utterances: any[] = [], positions: any[] = [];
+  const synth={paused:false,getVoices:()=>[],speak(u:any){utterances.push(u);},cancel(){this.paused=false;},pause(){this.paused=true;},resume(){this.paused=false;}};
+  (globalThis as any).window={speechSynthesis:synth};
+  (globalThis as any).SpeechSynthesisUtterance=class{constructor(public text:string){}};
+  const engine=new AudiobookSpeechEngine(); engine.setEngine('browser'); engine.setCallbacks({onWordChange:p=>positions.push(p)});
+  engine.loadChapter(['Hello, café! Next sentence.']);await engine.play();
+  const first=utterances[0], staleBoundary=first.onboundary;
+  first.onstart();first.onboundary({name:'word',charIndex:7});
+  assert.equal(positions.at(-1).word,'café');assert.equal(positions.at(-1).timing,'boundary');
+  const count=positions.length;engine.pause();first.onboundary({name:'word',charIndex:13});assert.equal(positions.length,count);
+  engine.resume();engine.setPlaybackRate(1.5);assert.equal(utterances.at(-1).text,'café! Next sentence.');
+  utterances.at(-1).onboundary({name:'word',charIndex:6});assert.equal(positions.at(-1).word,'Next');assert.equal(positions.at(-1).sentenceIndex,1);
+  staleBoundary({name:'word',charIndex:0});assert.equal(positions.at(-1).word,'Next');engine.stop();
+});
+
+test('timestamp alignment follows media time and a seek within audio preserves the clip', async () => {
+  const previousFetch=globalThis.fetch,previousAudio=(globalThis as any).Audio;
+  const positions:any[]=[],audios:any[]=[];
+  (globalThis as any).window={speechSynthesis:{cancel(){}}};
+  (globalThis as any).Audio=class{playbackRate=1;currentTime=0;duration=3;paused=false;readyState=4;ended=false;onloadedmetadata:any;onplaying:any;
+    constructor(public src:string){audios.push(this);}async play(){this.onloadedmetadata?.();this.onplaying?.();}pause(){this.paused=true;}removeAttribute(){} };
+  globalThis.fetch=(async()=>Response.json({audioBase64:'YWJj',mimeType:'audio/mpeg',wordTimepoints:[{wordIndex:0,timeSeconds:0},{wordIndex:1,timeSeconds:1},{wordIndex:2,timeSeconds:2}]}))as any;
+  const engine=new AudiobookSpeechEngine();engine.setCallbacks({onWordChange:p=>positions.push(p)});
+  try{engine.loadChapter(['one two three']);await engine.play();engine.seekToFraction(.5);assert.equal(audios.length,1);assert.equal(audios[0].currentTime,1.5);assert.equal(positions.at(-1).word,'two');assert.equal(positions.at(-1).timing,'timestamp');engine.pause();assert.equal(engine.getVisualization().energy,0);}
+  finally{engine.stop();globalThis.fetch=previousFetch;(globalThis as any).Audio=previousAudio;}
 });

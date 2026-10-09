@@ -2,6 +2,10 @@
 
 Adam’s Library imports EPUB and text files and narrates chapters using Gemini or Google Cloud TTS. Device speech is used automatically if the selected provider has no backend key, fails, or returns unplayable audio. Open Library search is for discovery; it does not add books to your shelf.
 
+The reader highlights words from device speech `boundary` events or complete Google Cloud SSML word timepoints. If a voice supplies neither, weighted timing follows the playback clock and the player displays **Estimated sync**. Google Cloud requests SSML marks through its v1beta1 endpoint when the marked input fits the 5 KB limit; oversized marked input uses plain text with estimated alignment. Gemini audio currently supplies no word timestamps. Exact Google alignment cannot be verified live until the project's billing and TTS API are enabled.
+
+The player shows a bounded history of spoken fragments flowing downward. Web Audio frequency data drives the spectrum for media audio; device narration uses word-event rhythm because Web Speech audio is not exposed to the analyser. Pause stops motion, seeking updates the selected word, and speed changes preserve the active passage. **Follow** centers the current sentence above the player; manual scrolling disables it. Reduced-motion preferences disable kinetic motion. Chapter duration remains approximate until individual audio clips are measured.
+
 ## Run locally
 
 Use Node.js 24 or newer.

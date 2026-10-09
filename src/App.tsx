@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import confetti from 'canvas-confetti';
 import { Book, Chapter, BookCategory, Bookmark, SleepTimerState, TtsEngine } from './types';
 import { INITIAL_BOOKS } from './data/sampleBooks';
-import { speechEngine } from './services/speechEngine';
+import { speechEngine, type WordPosition } from './services/speechEngine';
 import { ambientSound } from './utils/ambientAudio';
 
 import { Header } from './components/Header';
@@ -86,6 +86,7 @@ export default function App() {
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
   const [activeChapterIndex, setActiveChapterIndex] = useState<number>(0);
   const [activeParagraphIndex, setActiveParagraphIndex] = useState<number>(0);
+  const [wordPosition, setWordPosition] = useState<WordPosition>({paragraphIndex: 0, wordIndex: -1, sentenceIndex: -1, word: '', timing: 'idle'});
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentProgressSec, setCurrentProgressSec] = useState<number>(0);
   const [totalDurationSec, setTotalDurationSec] = useState<number>(100);
@@ -175,6 +176,7 @@ export default function App() {
   // Configure speech engine callbacks and settings
   useEffect(() => {
     speechEngine.setCallbacks({
+      onWordChange: setWordPosition,
       onParagraphChange: (pIdx) => {
         setActiveParagraphIndex(pIdx);
         const context = selection.current;
@@ -287,12 +289,12 @@ export default function App() {
   const handleJumpToParagraph = (pIdx: number) => {
     setActiveParagraphIndex(pIdx);
     speechEngine.jumpToParagraph(pIdx);
+    if (!speechEngine.getCurrentState().isPlaying) void speechEngine.play();
   };
 
   const handleSeek = (fraction: number) => {
     if (!activeChapter) return;
-    const targetPIdx = Math.floor(fraction * (activeChapter.paragraphs.length || 1));
-    handleJumpToParagraph(targetPIdx);
+    speechEngine.seekToFraction(fraction);
   };
 
   // Global Keyboard Shortcuts
@@ -518,7 +520,7 @@ export default function App() {
       )}
 
       {/* Main Content Area: Switch between Library and Reader */}
-      <main className="flex-1 pb-28">
+      <main className={`flex-1 ${activeBook ? 'has-narration-player' : ''}`}>
         {currentView === 'library' ? (
           <LibraryView
             books={books}
@@ -540,6 +542,7 @@ export default function App() {
             book={activeBook}
             currentChapterIndex={activeChapterIndex}
             currentParagraphIndex={activeParagraphIndex}
+            wordPosition={wordPosition}
             isPlaying={isPlaying}
             onBackToLibrary={() => setCurrentView('library')}
             onSelectChapter={handleSelectChapter}
@@ -570,6 +573,8 @@ export default function App() {
         <AudioPlayerBar
           book={activeBook}
           currentChapter={activeChapter}
+          currentParagraphIndex={activeParagraphIndex}
+          wordPosition={wordPosition}
           isPlaying={isPlaying}
           onPlayPause={handleTogglePlay}
           onSkipBack15={() => handleSkip15(-15)}

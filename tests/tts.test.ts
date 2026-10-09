@@ -39,16 +39,19 @@ test('Cloud TTS loads official voices and maps language and selected ID to MP3 s
   const oldFetch = globalThis.fetch; const calls: any[] = [];
   globalThis.fetch = (async (url: any, init: any) => {
     calls.push({url, init});
-    return Response.json(String(url).includes('/voices?') ? {voices: [{name: 'en-US-Neural2-F', languageCodes: ['en-US'], ssmlGender: 'FEMALE'}]} : {audioContent: 'YWJj'});
+    return Response.json(String(url).includes('/voices?') ? {voices: [{name: 'en-US-Neural2-F', languageCodes: ['en-US'], ssmlGender: 'FEMALE'}]} : {audioContent: 'YWJj',timepoints:[{markName:'w0',timeSeconds:0.02},{markName:'w1',timeSeconds:0.5}]});
   }) as any;
   try {
     const app = router({GOOGLE_CLOUD_TTS_API_KEY: 'cloud-test-secret'});
     const result = await (await app.fetch(request({text: 'Cloud narration', voiceId: 'en-US-Neural2-F', languageCode: 'en-US', provider: 'google-cloud'}))).json();
     assert.equal(result.mimeType, 'audio/mpeg'); assert.equal(result.audioBase64, 'YWJj');
-    assert.equal(calls[1].url, 'https://texttospeech.googleapis.com/v1/text:synthesize');
+    assert.equal(calls[1].url, 'https://texttospeech.googleapis.com/v1beta1/text:synthesize');
     const sent = JSON.parse(calls[1].init.body);
     assert.deepEqual(sent.voice, {languageCode: 'en-US', name: 'en-US-Neural2-F'});
     assert.equal(sent.audioConfig.audioEncoding, 'MP3');
+    assert.deepEqual(sent.enableTimePointing,['SSML_MARK']);
+    assert.equal(sent.input.ssml,'<speak><mark name="w0"/>Cloud <mark name="w1"/>narration</speak>');
+    assert.deepEqual(result.wordTimepoints,[{wordIndex:0,timeSeconds:0.02},{wordIndex:1,timeSeconds:0.5}]);
     const mismatch = await app.fetch(request({text: 'Hello', voiceId: 'en-US-Standard-A', languageCode: 'en-US', provider: 'google-cloud'}));
     assert.equal(mismatch.status, 400);
   } finally {globalThis.fetch = oldFetch;}

@@ -8,7 +8,7 @@ export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
     build: {outDir: 'dist/client'},
-    optimizeDeps: {noDiscovery: true, include: []},
+    optimizeDeps: {include: ['jszip', 'canvas-confetti', 'react', 'react-dom/client']},
     resolve: {
       alias: {
         '@': path.dirname(fileURLToPath(import.meta.url)),

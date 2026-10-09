@@ -1,9 +1,10 @@
 import type {RouteApp} from './router.ts';
 import {AVAILABLE_VOICES} from '../src/data/sampleBooks.ts';
 import {cloudAuthHeaders, cloudConfigured, cloudCredentialIdentity} from './google-cloud-auth.ts';
+import {markedSsml, narrationText, validTimepoints, type WordTimepoint} from '../src/utils/narrationText.ts';
 
 type Env = Record<string, string | undefined>;
-type Audio = {audioBase64: string; mimeType: string};
+type Audio = {audioBase64: string; mimeType: string; wordTimepoints?: WordTimepoint[]};
 const audioCache = new Map<string, Audio>();
 const voiceCache = new Map<string, {expires: number; voices: any[]}>();
 const isLanguage = (value: unknown): value is string => typeof value === 'string' && /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(value);
@@ -66,10 +67,14 @@ export function registerTtsRoutes(app: RouteApp, env: Env) {
       if (provider === 'google-cloud') {
         const voices = await cloudVoices(env, languageCode, req.signal);
         if (!voices.some(v => v.voiceId === voiceId && v.languageCodes.includes(languageCode))) return res.status(400).json({error: 'This voice is not available for the selected language.'});
-        const data = await googleJson('https://texttospeech.googleapis.com/v1/text:synthesize', await cloudAuthHeaders(env), {
-          input: {text: cleanText}, voice: {languageCode, name: voiceId}, audioConfig: {audioEncoding: 'MP3'},
+        const ssml = markedSsml(cleanText);
+        const withMarks = new TextEncoder().encode(ssml).length <= 4900;
+        const data = await googleJson(`https://texttospeech.googleapis.com/${withMarks ? 'v1beta1' : 'v1'}/text:synthesize`, await cloudAuthHeaders(env), {
+          input: withMarks ? {ssml} : {text: cleanText}, voice: {languageCode, name: voiceId}, audioConfig: {audioEncoding: 'MP3'},
+          ...(withMarks ? {enableTimePointing: ['SSML_MARK']} : {}),
         }, req.signal);
-        audio = {audioBase64: data.audioContent, mimeType: 'audio/mpeg'};
+        const points = (data.timepoints || []).map((p: any) => ({wordIndex: /^w\d+$/.test(p.markName) ? Number(p.markName.slice(1)) : -1, timeSeconds: p.timeSeconds}));
+        audio = {audioBase64: data.audioContent, mimeType: 'audio/mpeg', wordTimepoints: validTimepoints(points, narrationText(cleanText).words.length)};
       } else {
         // Gemini 3.8 treats the transcript verbatim; delivery directions are metadata.
         const data = await googleJson('https://generativelanguage.googleapis.com/v1beta/interactions', key, {

@@ -55,7 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-600 to-indigo-600 flex items-center justify-center shadow-md shadow-teal-900/20 text-white">
               <BookOpen className="w-5 h-5" />
             </div>
-            <div>
+            <div className="hidden sm:block">
               <div className="flex items-center gap-2">
                 <span className="font-bold text-lg tracking-tight text-slate-900 dark:text-white flex items-center gap-1">
                   Adam’s <span className="text-emerald-600 dark:text-emerald-400">Library</span>
@@ -72,13 +72,14 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Search Bar */}
-          <div className="flex-1 max-w-md mx-1 sm:mx-2">
+          <div className="header-search flex-1 min-w-0 max-w-md mx-1 sm:mx-2">
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
                 <Search className="w-4 h-4" />
               </div>
               <input
                 id="main-search-input"
+                aria-label="Search your library"
                 type="text"
                 value={searchQuery}
                 onChange={(e) => onSearchChange(e.target.value)}
