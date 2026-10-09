@@ -13,7 +13,9 @@ npm run dev
 
 Open `http://localhost:3000`. Copy `.env.example` to `.env.local` and set `GEMINI_TTS_API_KEY` for Gemini narration or `GOOGLE_CLOUD_TTS_API_KEY` for Google Cloud voices. `GEMINI_API_KEY` is also accepted for Gemini narration and enables chapter insights. The Node server loads `.env.local` automatically. Never prefix a secret with `VITE_` or commit a real key. Uploaded books are stored in the ignored `library-data/` folder on this computer.
 
-For the hosted Site, add these same variables as **secrets** in Site settings. A local `.env.local` does not automatically configure the hosted runtime. Cloud TTS also needs the Text-to-Speech API enabled in the key's Cloud project and compatible Google billing/API access.
+For Google Cloud service-account credentials, save the downloaded JSON outside this repository and set `GOOGLE_APPLICATION_CREDENTIALS` in `.env.local` to its path. For hosted Sites, store its JSON contents in the backend secret `GOOGLE_CLOUD_TTS_SERVICE_ACCOUNT_JSON`; local file paths cannot work on the hosted server. Service-account authentication uses Google's OAuth endpoint, signed RS256 claims and cached access tokens. Credentials and tokens are never returned to the browser.
+
+For the hosted Site, add these same variables as **secrets** in Site settings. A local `.env.local` does not automatically configure the hosted runtime. Cloud TTS also needs the Text-to-Speech API enabled in the credential's Cloud project and an active linked billing account. If Google rejects authentication or synthesis, narration falls back to device speech.
 
 `POST /api/tts` accepts `{text, languageCode, voiceId, provider, style}`. Providers are `gemini` and `google-cloud`. Text is limited to 1000 characters per chunk. The server returns Base64 audio and its MIME type: Cloud uses MP3; Gemini PCM is wrapped in a WAV container by the client. `GET /api/tts/voices?languageCode=en-US` loads official Standard, WaveNet and Neural2 identifiers through Google's backend voice-list API. Existing `voiceName` requests remain supported. Secrets are sent to Google only by the backend and never returned to the browser.
 

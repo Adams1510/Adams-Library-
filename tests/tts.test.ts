@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {ApiRouter} from '../server/router.ts';
 import {registerTtsRoutes} from '../server/tts.ts';
+import {generateKeyPairSync, verify} from 'node:crypto';
 
 function router(env: Record<string, string> = {}) {const app = new ApiRouter(); registerTtsRoutes(app, env); return app;}
 function request(body: unknown) {return new Request('https://library.test/api/tts', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});}
@@ -61,4 +62,46 @@ test('provider errors become a safe fallback without leaking the Google response
     assert.equal(result.reason, 'provider_error'); assert.equal(result.useFallback, true);
     assert.ok(!JSON.stringify(result).includes('private transcript'));
   } finally {globalThis.fetch = oldFetch;}
+});
+
+test('service-account credentials sign OAuth claims and use cached bearer auth for official voices and synthesis', async () => {
+  const {privateKey, publicKey} = generateKeyPairSync('rsa', {modulusLength:2048});
+  const raw = JSON.stringify({type:'service_account', client_email:'narrator@test-project.iam.gserviceaccount.com', private_key:privateKey.export({type:'pkcs8',format:'pem'}), token_uri:'https://untrusted.test/token'});
+  const calls: any[] = [], oldFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: any, init: any) => {
+    calls.push({url, init});
+    if(url === 'https://oauth2.googleapis.com/token') {
+      const params = new URLSearchParams(init.body), jwt = params.get('assertion')!;
+      assert.equal(params.get('grant_type'), 'urn:ietf:params:oauth:grant-type:jwt-bearer');
+      const [header, claims, signature] = jwt.split('.');
+      const payload = JSON.parse(Buffer.from(claims,'base64url').toString());
+      assert.equal(payload.aud,url); assert.equal(payload.iss,'narrator@test-project.iam.gserviceaccount.com');
+      assert.equal(payload.scope,'https://www.googleapis.com/auth/cloud-platform');
+      assert.equal(payload.exp-payload.iat,3600);
+      assert.ok(verify('RSA-SHA256',Buffer.from(`${header}.${claims}`),publicKey,Buffer.from(signature,'base64url')));
+      return Response.json({access_token:'test-oauth-secret',expires_in:3600});
+    }
+    assert.equal(init.headers.Authorization, 'Bearer test-oauth-secret');
+    assert.equal(init.headers['x-goog-api-key'], undefined);
+    return Response.json(String(url).includes('/voices?') ? {voices:[{name:'en-US-Standard-C',languageCodes:['en-US'],ssmlGender:'FEMALE'}]} : {audioContent:'YWJj'});
+  }) as any;
+  try {
+    const app = router({GOOGLE_CLOUD_TTS_SERVICE_ACCOUNT_JSON:raw});
+    const results = await Promise.all([app.fetch(new Request('https://library.test/api/tts/voices')),app.fetch(new Request('https://library.test/api/tts/voices'))]);
+    for(const response of results)assert.equal((await response.json()).cloudConfigured,true);
+    const result=await(await app.fetch(request({text:'OAuth narration',provider:'google-cloud',voiceId:'en-US-Standard-C'}))).json();
+    assert.equal(result.audioBase64,'YWJj');
+    assert.equal(calls.filter(c=>c.url==='https://oauth2.googleapis.com/token').length,1);
+    assert.ok(!JSON.stringify(result).includes('test-oauth-secret'));
+    assert.ok(!JSON.stringify(result).includes('PRIVATE KEY'));
+  } finally {globalThis.fetch=oldFetch;}
+});
+
+test('invalid service-account JSON stays on the backend and falls back safely', async () => {
+  const app = router({GOOGLE_CLOUD_TTS_SERVICE_ACCOUNT_JSON:'invalid-private-credential'});
+  const voices=await(await app.fetch(new Request('https://library.test/api/tts/voices'))).json();
+  assert.equal(voices.voices.length,0);
+  const result=await(await app.fetch(request({text:'Hello',provider:'google-cloud',voiceId:'en-US-Standard-C'}))).json();
+  assert.equal(result.reason,'provider_error'); assert.equal(result.useFallback,true);
+  assert.ok(!JSON.stringify([voices,result]).includes('invalid-private-credential'));
 });

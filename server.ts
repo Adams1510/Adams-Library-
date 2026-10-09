@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import dotenv from 'dotenv';
+import {readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {ApiRouter} from './server/router.ts';
 import {registerAiRoutes} from './server/ai.ts';
@@ -9,6 +10,9 @@ import {localStorage} from './server/local-storage.ts';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({path: [path.join(root, '.env.local'), path.join(root, '.env')], quiet:true});
+if (!process.env.GOOGLE_CLOUD_TTS_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  process.env.GOOGLE_CLOUD_TTS_SERVICE_ACCOUNT_JSON = readFileSync(path.resolve(root, process.env.GOOGLE_APPLICATION_CREDENTIALS), 'utf8').replace(/^\uFEFF/, '');
+}
 const app = express(), port = Number(process.env.PORT || 3000);
 const api = new ApiRouter();
 registerAiRoutes(api, process.env);

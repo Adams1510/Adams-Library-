@@ -1,5 +1,6 @@
 import type {RouteApp} from './router.ts';
 import {AVAILABLE_VOICES} from '../src/data/sampleBooks.ts';
+import {cloudAuthHeaders, cloudConfigured, cloudCredentialIdentity} from './google-cloud-auth.ts';
 
 type Env = Record<string, string | undefined>;
 type Audio = {audioBase64: string; mimeType: string};
@@ -8,12 +9,11 @@ const voiceCache = new Map<string, {expires: number; voices: any[]}>();
 const isLanguage = (value: unknown): value is string => typeof value === 'string' && /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(value);
 const usableKey = (key?: string) => key && !/^(MY_|YOUR_|REPLACE_)/.test(key) ? key : undefined;
 export const geminiTtsKey = (env: Env) => usableKey(env.GEMINI_TTS_API_KEY) || usableKey(env.GEMINI_API_KEY);
-const cloudKey = (env: Env) => usableKey(env.GOOGLE_CLOUD_TTS_API_KEY);
 
-async function googleJson(url: string, key: string, body?: unknown, signal?: AbortSignal): Promise<any> {
+async function googleJson(url: string, auth: string | Record<string, string>, body?: unknown, signal?: AbortSignal): Promise<any> {
   const response = await fetch(url, {
     method: body ? 'POST' : 'GET',
-    headers: {'Content-Type': 'application/json', 'x-goog-api-key': key},
+    headers: {'Content-Type': 'application/json', ...(typeof auth === 'string' ? {'x-goog-api-key': auth} : auth)},
     ...(body ? {body: JSON.stringify(body)} : {}),
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
   });
@@ -23,12 +23,12 @@ async function googleJson(url: string, key: string, body?: unknown, signal?: Abo
 }
 
 async function cloudVoices(env: Env, languageCode: string, signal?: AbortSignal) {
-  const key = cloudKey(env);
-  if (!key) return [];
+  const key = cloudCredentialIdentity(env);
+  if (!cloudConfigured(env)) return [];
   const cacheKey = `${key}:${languageCode}`;
   const cached = voiceCache.get(cacheKey);
   if (cached && cached.expires > Date.now()) return cached.voices;
-  const data = await googleJson(`https://texttospeech.googleapis.com/v1/voices?languageCode=${encodeURIComponent(languageCode)}`, key, undefined, signal);
+  const data = await googleJson(`https://texttospeech.googleapis.com/v1/voices?languageCode=${encodeURIComponent(languageCode)}`, await cloudAuthHeaders(env), undefined, signal);
   const voices = (Array.isArray(data.voices) ? data.voices : []).filter((v: any) =>
     typeof v.name === 'string' && /-(Standard|Wavenet|Neural2)-/.test(v.name) && Array.isArray(v.languageCodes)
   ).map((v: any) => ({voiceId: v.name, languageCodes: v.languageCodes, gender: v.ssmlGender}));
@@ -41,7 +41,7 @@ export function registerTtsRoutes(app: RouteApp, env: Env) {
   app.get('/api/tts/voices', async (req, res) => {
     const languageCode = req.query.languageCode || 'en-US';
     if (!isLanguage(languageCode)) return res.status(400).json({error: 'Use a valid language code, such as en-US.'});
-    const configuration = {geminiConfigured: !!geminiTtsKey(env), cloudConfigured: !!cloudKey(env)};
+    const configuration = {geminiConfigured: !!geminiTtsKey(env), cloudConfigured: cloudConfigured(env)};
     try {res.json({...configuration, voices: await cloudVoices(env, languageCode, req.signal)});}
     catch {res.json({...configuration, voices: [], error: 'Google Cloud voices could not be loaded. Check your server key and API access.'});}
   });
@@ -55,7 +55,7 @@ export function registerTtsRoutes(app: RouteApp, env: Env) {
     const validGeminiVoice = AVAILABLE_VOICES.some(v => v.geminiVoiceName === voiceId) || /^voice_[a-zA-Z0-9_-]{1,90}$/.test(voiceId);
     if (provider === 'gemini' && !validGeminiVoice) return res.status(400).json({error: 'Choose a supported Gemini voice.'});
     if (provider === 'google-cloud' && !/^[a-z]{2,3}-[A-Z]{2}-(Standard|Wavenet|Neural2)-[A-Za-z0-9]+$/.test(voiceId)) return res.status(400).json({error: 'Choose a Standard, WaveNet or Neural2 voice from the Google Cloud list.'});
-    const key = provider === 'google-cloud' ? cloudKey(env) : geminiTtsKey(env);
+    const key = provider === 'google-cloud' ? cloudCredentialIdentity(env) : geminiTtsKey(env);
     if (!key) return res.json({audioBase64: null, useFallback: true, reason: 'missing_key', message: `${provider === 'gemini' ? 'Gemini' : 'Google Cloud'} narration is not configured. Using device speech.`});
     const cleanText = text.trim(), model = env.GEMINI_TTS_MODEL || 'gemini-3.8-flash-lite-tts';
     const cacheKey = JSON.stringify([provider, key, model, voiceId, languageCode, style, cleanText]);
@@ -66,7 +66,7 @@ export function registerTtsRoutes(app: RouteApp, env: Env) {
       if (provider === 'google-cloud') {
         const voices = await cloudVoices(env, languageCode, req.signal);
         if (!voices.some(v => v.voiceId === voiceId && v.languageCodes.includes(languageCode))) return res.status(400).json({error: 'This voice is not available for the selected language.'});
-        const data = await googleJson('https://texttospeech.googleapis.com/v1/text:synthesize', key, {
+        const data = await googleJson('https://texttospeech.googleapis.com/v1/text:synthesize', await cloudAuthHeaders(env), {
           input: {text: cleanText}, voice: {languageCode, name: voiceId}, audioConfig: {audioEncoding: 'MP3'},
         }, req.signal);
         audio = {audioBase64: data.audioContent, mimeType: 'audio/mpeg'};
