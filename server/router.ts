@@ -44,7 +44,7 @@ export class ApiRouter implements RouteApp {
             while (true) {
               const next = await reader.read(); if (next.done) break;
               size += next.value.length;
-              if (size > 16 * 1024 * 1024) {await reader.cancel(); return res.status(413).json({error: 'Extracted book is too large (16 MB limit). Try a smaller volume.'});}
+              if (size > 64 * 1024 * 1024) {await reader.cancel(); return res.status(413).json({error: 'This book contains more than 64 MB of extracted text. Try a text-only EPUB or a smaller volume.'});}
               chunks.push(next.value);
             }
           }

@@ -51,7 +51,7 @@ export function EpubUploadModal({isOpen, onClose, onBookImported}: Props) {
   return <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
     <section role="dialog" aria-modal="true" aria-labelledby="upload-title" className="w-full max-w-3xl max-h-[90vh] flex flex-col bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-200 dark:border-slate-700 shadow-2xl">
       <header className="flex items-center justify-between mb-4">
-        <div><h2 id="upload-title" className="font-bold text-lg">Add your books</h2><p className="text-xs text-slate-500 mt-1">EPUB and TXT · multiple files supported · up to 50 MB per file</p></div>
+        <div><h2 id="upload-title" className="font-bold text-lg">Add your books</h2><p className="text-xs text-slate-500 mt-1">EPUB and TXT · multiple files supported · large EPUBs stay as one book</p></div>
         <button aria-label="Close upload" disabled={busy} onClick={onClose} className="p-2 disabled:opacity-30"><X size={20}/></button>
       </header>
       <div className="overflow-y-auto space-y-4 flex-1">

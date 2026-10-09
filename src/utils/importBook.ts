@@ -4,7 +4,9 @@ import type { Book } from '../types';
 export async function importBookFile(file: File): Promise<Book> {
   const extension = file.name.split('.').pop()?.toLowerCase();
   if (!['epub', 'txt'].includes(extension || '')) throw new Error('Choose an EPUB or TXT file.');
-  if (file.size > 50 * 1024 * 1024) throw new Error('Each file must be 50 MB or smaller.');
+  // EPUBs can contain large scanned images and fonts. Parse the archive first;
+  // the API limits extracted narration separately, so the reader still remains
+  // one book with normal chapters instead of forcing users to split files.
   const bytes = await file.arrayBuffer();
   const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
   let book: Book;
