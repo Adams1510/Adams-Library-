@@ -144,3 +144,22 @@ test('missing Arabic voices stop with a useful message rather than choosing an E
   engine.loadChapter(['English and العربية']);await engine.play();
   assert.equal(spoken,0);assert.match(message,/Arabic device voice/);assert.equal(engine.getCurrentState().isPlaying,false);engine.stop();
 });
+
+test('ElevenLabs narrates mixed passages online then falls back for the session on exhausted credits', async () => {
+  const previousFetch=globalThis.fetch,previousAudio=(globalThis as any).Audio;
+  const utterances:any[]=[], requests:any[]=[];let plays=0;
+  const voices=[{voiceURI:'en',lang:'en-US'},{voiceURI:'ar',lang:'ar-SA'}];
+  (globalThis as any).window={speechSynthesis:{getVoices:()=>voices,cancel(){},speak(u:any){utterances.push(u);}}};
+  (globalThis as any).SpeechSynthesisUtterance=class{constructor(public text:string){}};
+  (globalThis as any).Audio=class{playbackRate=1;currentTime=0;async play(){plays++;}pause(){}removeAttribute(){}};
+  const engine=new AudiobookSpeechEngine();engine.setEngine('elevenlabs','21m00Tcm4TlvDq8ikWAM');
+  try {
+    globalThis.fetch=(async (_url:any,init:any)=>{requests.push(JSON.parse(init.body));return Response.json({audioBase64:'YWJj',mimeType:'audio/mpeg'});})as any;
+    engine.loadChapter(['English العربية']);await engine.play();engine.stop();
+    assert.equal(plays,1);assert.equal(utterances.length,0);assert.equal(requests[0].text,'English العربية');
+    globalThis.fetch=(async()=>{requests.push({});return Response.json({reason:'credits_exhausted',useFallback:true,error:'Credits exhausted'});})as any;
+    engine.loadChapter(['New العربية']);await engine.play();assert.equal(utterances.length,1);
+    utterances[0].onend();assert.equal(utterances[1].lang,'ar-SA');
+    engine.stop();engine.loadChapter(['Another passage']);await engine.play();assert.equal(requests.length,2);
+  } finally {engine.stop();globalThis.fetch=previousFetch;(globalThis as any).Audio=previousAudio;}
+});

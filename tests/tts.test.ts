@@ -7,6 +7,38 @@ import {generateKeyPairSync, verify} from 'node:crypto';
 function router(env: Record<string, string> = {}) {const app = new ApiRouter(); registerTtsRoutes(app, env); return app;}
 function request(body: unknown) {return new Request('https://library.test/api/tts', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});}
 
+test('ElevenLabs keeps mixed text intact and maps original character timestamps to words', async () => {
+  const originalFetch = globalThis.fetch, text = 'Hello العربية';
+  globalThis.fetch = (async (url: any, init: any) => {
+    assert.match(String(url), /api.elevenlabs.io\/v1\/text-to-speech\//);
+    assert.equal(init.headers['xi-api-key'], 'eleven-test-secret');
+    const body = JSON.parse(init.body);
+    assert.equal(body.text, text); assert.equal(body.model_id, 'eleven_flash_v2_5');
+    assert.equal(body.language_code, undefined);
+    return Response.json({audio_base64: 'YWJj', alignment: {characters: [...text], character_start_times_seconds: [...text].map((_, i) => i / 10)}});
+  }) as any;
+  try {
+    const result = await (await router({ELEVENLABS_API_KEY: 'eleven-test-secret'}).fetch(request({text, provider: 'elevenlabs', voiceId: '21m00Tcm4TlvDq8ikWAM'}))).json();
+    assert.equal(result.mimeType, 'audio/mpeg');
+    assert.deepEqual(result.wordTimepoints, [{wordIndex: 0, timeSeconds: 0}, {wordIndex: 1, timeSeconds: 0.6}]);
+    assert.ok(!JSON.stringify(result).includes('eleven-test-secret'));
+  } finally {globalThis.fetch = originalFetch;}
+});
+
+test('exhausted ElevenLabs credits return a safe fallback and suppress repeated charge attempts', async () => {
+  const originalFetch = globalThis.fetch; let calls = 0;
+  globalThis.fetch = (async () => {calls++; return Response.json({detail: {status: 'quota_exceeded', message: 'private account information'}}, {status: 401});}) as any;
+  try {
+    const app = router({ELEVENLABS_API_KEY: 'quota-test-key'});
+    for (const text of ['first request', 'next request']) {
+      const result = await (await app.fetch(request({text, provider: 'elevenlabs', voiceId: '21m00Tcm4TlvDq8ikWAM'}))).json();
+      assert.equal(result.reason, 'credits_exhausted'); assert.equal(result.useFallback, true);
+      assert.ok(!JSON.stringify(result).includes('private account'));
+    }
+    assert.equal(calls, 1);
+  } finally {globalThis.fetch = originalFetch;}
+});
+
 test('TTS validates input before requesting Google and falls back when a key is missing', async () => {
   const app = router();
   assert.equal((await app.fetch(request({text: '   '}))).status, 400);

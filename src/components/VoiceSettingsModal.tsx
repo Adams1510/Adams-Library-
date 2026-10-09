@@ -64,6 +64,8 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
   const [testingVoiceId, setTestingVoiceId] = useState<string | null>(null);
   const [browserVoices, setBrowserVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [cloudVoices, setCloudVoices] = useState<{voiceId: string; languageCodes: string[]; gender: string}[]>([]);
+  const [elevenVoices, setElevenVoices] = useState<{voiceId: string; name: string}[]>([]);
+  const [elevenConfigured, setElevenConfigured] = useState(false);
   const [configurationMessage, setConfigurationMessage] = useState('');
   useEffect(() => {
     if (!isOpen) return;
@@ -72,6 +74,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
     fetch(`/api/tts/voices?languageCode=${encodeURIComponent(languageCode)}`, {signal: controller.signal})
       .then(response => response.json()).then(data => {
         setCloudVoices(data.voices || []);
+        setElevenConfigured(!!data.elevenlabsConfigured); setElevenVoices(data.elevenlabsVoices || []);
         setConfigurationMessage(data.error || (!data.cloudConfigured ? 'A Google Cloud TTS key is needed to load Standard, WaveNet and Neural2 voices.' : ''));
       }).catch(() => {if (!controller.signal.aborted) setConfigurationMessage('Google Cloud voices could not be loaded.');});
     return () => controller.abort();
@@ -146,18 +149,18 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
             audio.playbackRate = playbackRate;
             await audio.play();
             audio.onended = () => {if (generation === previewGeneration.current) setTestingVoiceId(null);};
-            audio.onerror = () => {setPreviewError('Google audio could not be played. Using the device voice.'); playDevicePreview(sampleText, generation);};
+            audio.onerror = () => {setPreviewError('Online audio could not be played. Using the device voice.'); playDevicePreview(sampleText, generation);};
             return;
           }
         }
       }
 
       if (generation !== previewGeneration.current) return;
-      if (voice.engine !== 'browser') setPreviewError('Google voice is unavailable. This preview uses your device voice.');
+      if (voice.engine !== 'browser') setPreviewError('Online voice is unavailable. This preview uses your device voice.');
       playDevicePreview(sampleText, generation);
     } catch (e) {
       if (generation !== previewGeneration.current) return;
-      setPreviewError('Google voice could not be played. Using the device voice.');
+      setPreviewError('Online voice could not be played. Using the device voice.');
       playDevicePreview(sampleText, generation);
     }
   };
@@ -178,7 +181,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
                 Voice & Speech Engine
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Google narration with automatic device speech fallback
+                Online narration with automatic device speech fallback
               </p>
             </div>
           </div>
@@ -194,6 +197,21 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
         {/* Modal Body */}
         <div className="py-5 overflow-y-auto space-y-6 flex-1 pr-1">
           
+          <div className="space-y-2">
+            <label htmlFor="eleven-voice" className="block text-sm font-bold text-slate-700 dark:text-slate-200">ElevenLabs narrator</label>
+            <select id="eleven-voice" value={currentEngine === 'elevenlabs' ? currentGeminiVoice : ''} disabled={!elevenConfigured}
+              onChange={e => {if (e.target.value) onSelectEngineAndVoice('elevenlabs', e.target.value);}}
+              className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm">
+              <option value="">Select an ElevenLabs voice</option>
+              {elevenVoices.map(v => <option key={v.voiceId} value={v.voiceId}>{v.name}</option>)}
+              {!elevenVoices.length && <option value="21m00Tcm4TlvDq8ikWAM">Rachel</option>}
+            </select>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Reads English and Arabic in the book’s order. If credits run out or narration fails, your device voices take over.</p>
+            {!elevenConfigured && <p className="text-sm text-amber-600">ElevenLabs is not connected yet.</p>}
+            {currentEngine === 'elevenlabs' && <button type="button" onClick={() => testVoiceSample({id: 'eleven-preview', name: currentGeminiVoice, engine: 'elevenlabs', geminiVoiceName: currentGeminiVoice, gender: 'Neutral', description: ''})} className="text-sm font-semibold text-emerald-600">Preview ElevenLabs voice</button>}
+            <p className="text-sm text-slate-500">ElevenLabs audio · elevenlabs.io</p>
+            <button type="button" onClick={() => onSelectEngineAndVoice('browser', 'Kore')} className="text-sm font-semibold text-emerald-600">Use device narration</button>
+          </div>
           {/* Narrator Voice Selection */}
           <div>
             <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">
@@ -294,7 +312,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
               <input type="checkbox" checked={bilingual} onChange={e => onChangeBilingual(e.target.checked)} className="mt-1 accent-emerald-600"/>
               Automatically read Arabic and English in their original languages
             </label>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Mixed passages use separate device voices, in the book’s order. Nothing is translated.</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400">ElevenLabs uses one multilingual narrator. Device narration switches between your English and Arabic voices. Nothing is translated.</p>
             <label htmlFor="device-voice" className="block text-sm font-bold text-slate-500 dark:text-slate-400">{bilingual ? 'English device voice' : 'Device fallback voice'}</label>
             <select id="device-voice" value={browserVoiceURI} onChange={(event) => onSelectBrowserVoice(event.target.value)}
               className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-800 dark:text-slate-100">
@@ -308,7 +326,7 @@ export const VoiceSettingsModal: React.FC<VoiceSettingsModalProps> = ({
                 <option value="">Automatically choose an Arabic voice</option>
                 {browserVoices.filter(v => /^ar(?:-|$)/i.test(v.lang)).map(v => <option key={v.voiceURI} value={v.voiceURI}>{v.name} ({v.lang})</option>)}
               </select>
-              {!browserVoices.some(v => /^ar(?:-|$)/i.test(v.lang)) && <p className="text-sm text-amber-600 dark:text-amber-300">No Arabic voice is available on this device yet. Enable an Arabic voice in your device’s speech settings. Narration will pause rather than read Arabic with an English voice.</p>}
+              {!browserVoices.some(v => /^ar(?:-|$)/i.test(v.lang)) && <p className="text-sm text-amber-600 dark:text-amber-300">No Arabic voice is available on this device yet. Enable an Arabic voice in your device’s speech settings. Device fallback needs an Arabic voice; without one, it will pause on Arabic passages.</p>}
             </>}
           </div>
 

@@ -40,6 +40,7 @@ export class AudiobookSpeechEngine {
   private generation = 0;
   private request: AbortController | null = null;
   private geminiCooldownUntil = 0;
+  private elevenExhausted = false;
   private cache = new Map<string, {blob: Blob; points: WordTimepoint[]}>();
   private cacheBytes = 0;
   private words: Word[] = [];
@@ -233,7 +234,7 @@ export class AudiobookSpeechEngine {
     const hasArabic = languageRuns.some(r => r.language === 'ar');
     // Mixed passages need two device voices; the deferred cloud setup has one selected voice.
     const deviceBilingual = this.bilingual && hasArabic && (languageRuns.some(r => r.language === 'en') || !this.languageCode.startsWith('ar'));
-    if (this.engine !== 'browser' && !deviceBilingual && !this.isGeminiCooldownActive()) {
+    if (this.engine !== 'browser' && (this.engine === 'elevenlabs' || !deviceBilingual) && !(this.engine === 'elevenlabs' && this.elevenExhausted) && !this.isGeminiCooldownActive()) {
       try {
         const key = `${this.engine}:${this.geminiVoiceName}:${this.languageCode}:${this.geminiStyle}:${text}`;
         let clip = this.cache.get(key);
@@ -245,6 +246,7 @@ export class AudiobookSpeechEngine {
             const res = await fetch('/api/tts', {method: 'POST', headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({text, voiceId: this.geminiVoiceName, provider: this.engine, languageCode: this.languageCode, style: this.geminiStyle}), signal: controller.signal});
             data = await res.json();
+            if (data.reason === 'credits_exhausted' && this.engine === 'elevenlabs') this.elevenExhausted = true;
             if (!res.ok || !data.audioBase64) throw new Error(data.message || data.error || 'AI voice is unavailable.');
           } finally { clearTimeout(timeout); if (this.request === controller) this.request = null; }
           if (version !== this.generation || !this.isPlaying) return;
@@ -276,7 +278,7 @@ export class AudiobookSpeechEngine {
         audio.onerror = () => {
           if (version !== this.generation || !this.isPlaying) return;
           this.geminiCooldownUntil = Date.now() + 60000;
-          this.callbacks.onEngineFallback?.('Google audio could not be played. Using device speech.');
+          this.callbacks.onEngineFallback?.('Online audio could not be played. Using device speech.');
           this.pendingSeconds = this.paragraphSeconds; void this.speak();
         };
         await audio.play(); return;

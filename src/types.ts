@@ -51,7 +51,7 @@ export interface ReadingProgress {
   lastListenedAt: string;
 }
 
-export type TtsEngine = 'gemini' | 'google-cloud' | 'browser';
+export type TtsEngine = 'gemini' | 'google-cloud' | 'elevenlabs' | 'browser';
 
 export interface VoiceOption {
   id: string;

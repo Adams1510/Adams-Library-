@@ -100,7 +100,9 @@ export default function App() {
   useEffect(() => {
     const controller = new AbortController();
     fetch('/api/tts/voices?languageCode=en-US', {signal: controller.signal}).then(response => response.json()).then(data => {
-      if (!data.geminiConfigured && data.cloudConfigured && data.voices?.length) {
+      if (data.elevenlabsConfigured) {
+        setTtsEngine('elevenlabs'); setGeminiVoiceName(data.elevenlabsDefaultVoice);
+      } else if (!data.geminiConfigured && data.cloudConfigured && data.voices?.length) {
         setTtsEngine('google-cloud'); setGeminiVoiceName(data.voices[0].voiceId);
       }
     }).catch(() => {});
